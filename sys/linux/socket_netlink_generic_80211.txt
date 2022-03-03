@@ -570,7 +570,7 @@ nl80211_match_band_rssi_policy [
 	NL80211_BAND_5GHZ	nlattr[NL80211_BAND_5GHZ, int32]
 	NL80211_BAND_6GHZ	nlattr[NL80211_BAND_6GHZ, int32]
 	NL80211_BAND_60GHZ	nlattr[NL80211_BAND_60GHZ, int32]
-	NL80211_BAND_LC		nlattr[NL80211_BAND_LC, int32]
+#	NL80211_BAND_LC		nlattr[NL80211_BAND_LC, int32]
 ] [varlen]
 
 nl80211_policy$join_ibss [
