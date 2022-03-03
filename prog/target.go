@@ -11,6 +11,8 @@ import (
 	"sync/atomic"
 )
 
+var bpfRuntimeFuzzer *BpfRuntimeFuzzer
+
 // Target describes target OS/arch pair.
 type Target struct {
 	OS                string
@@ -146,6 +148,8 @@ func (target *Target) initTarget() {
 
 	target.resourceMap = restoreLinks(target.Syscalls, target.Resources, target.types)
 	target.initAnyTypes()
+	bpfRuntimeFuzzer = NewBpfRuntimeFuzzer()
+	bpfRuntimeFuzzer.InitFromSrc(HelperFuncMap, ProgTypeMap, CtxAccessMap)
 
 	target.SyscallMap = make(map[string]*Syscall)
 	for i, c := range target.Syscalls {

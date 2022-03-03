@@ -364,6 +364,12 @@ func (t *BufferType) mutate(r *randGen, s *state, arg Arg, ctx ArgCtx) (calls []
 	return
 }
 
+func (t *BpfProgType) mutate(r *randGen, s *state, arg Arg, ctx ArgCtx) (calls []*Call, retry, preserve bool) {
+	a := arg.(*DataArg)
+	a.data = bpfRuntimeFuzzer.GenBpfInsns()
+	return
+}
+
 func mutateBufferSize(r *randGen, arg *DataArg, minLen, maxLen uint64) {
 	for oldSize := arg.Size(); oldSize == arg.Size(); {
 		arg.size += uint64(r.Intn(33)) - 16
@@ -646,6 +652,10 @@ func (t *BufferType) getMutationPrio(target *Target, arg Arg, ignoreSpecial bool
 		// These are effectively consts (and frequently file names).
 		return dontMutate, false
 	}
+	return 0.8 * maxPriority, false
+}
+
+func (t *BpfProgType) getMutationPrio(target *Target, arg Arg, ignoreSpecial bool) (prio float64, stopRecursion bool) {
 	return 0.8 * maxPriority, false
 }
 

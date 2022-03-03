@@ -739,6 +739,17 @@ func (a *BufferType) generate(r *randGen, s *state, dir Dir) (arg Arg, calls []*
 	}
 }
 
+func (a *BpfProgType) generate(r *randGen, s *state, dir Dir) (arg Arg, calls []*Call) {
+	data := bpfRuntimeFuzzer.GenBpfInsns()
+//	var data []byte
+//	if len(a.Values) == 1 {
+//		data = []byte(a.Values[0])
+//	} else if !a.Varlen() {
+//		data = make([]byte, a.Size())
+//	}
+	return MakeDataArg(a, dir, data), nil
+}
+
 func (a *VmaType) generate(r *randGen, s *state, dir Dir) (arg Arg, calls []*Call) {
 	npages := r.randPageCount()
 	if a.RangeBegin != 0 || a.RangeEnd != 0 {
