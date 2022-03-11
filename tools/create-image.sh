@@ -8,7 +8,7 @@ set -eux
 
 # Create a minimal Debian distribution in a directory.
 DIR=chroot
-PREINSTALL_PKGS=openssh-server,curl,tar,gcc,libc6-dev,time,strace,sudo,less,psmisc,selinux-utils,policycoreutils,checkpolicy,selinux-policy-default,firmware-atheros,debian-ports-archive-keyring
+PREINSTALL_PKGS=openssh-server,curl,tar,gcc,libc6-dev,time,strace,sudo,less,psmisc,selinux-utils,policycoreutils,checkpolicy,selinux-policy-default,firmware-atheros,debian-ports-archive-keyring,xz-utils
 
 # If ADD_PACKAGE is not defined as an external environment variable, use our default packages
 if [ -z ${ADD_PACKAGE+x} ]; then
@@ -173,10 +173,10 @@ cat $RELEASE.id_rsa.pub | sudo tee $DIR/root/.ssh/authorized_keys
 if [ $PERF = "true" ]; then
     cp -r $KERNEL $DIR/tmp/
     BASENAME=$(basename $KERNEL)
-    sudo chroot $DIR /bin/bash -c "apt-get update; apt-get install -y flex bison python-dev libelf-dev libunwind8-dev libaudit-dev libslang2-dev libperl-dev binutils-dev liblzma-dev libnuma-dev"
+    sudo chroot $DIR /bin/bash -c "apt-get update; apt-get install -y flex bison python-dev-is-python3 libelf-dev libunwind8-dev libaudit-dev libslang2-dev libperl-dev binutils-dev liblzma-dev libnuma-dev"
     sudo chroot $DIR /bin/bash -c "cd /tmp/$BASENAME/tools/perf/; make"
     sudo chroot $DIR /bin/bash -c "cp /tmp/$BASENAME/tools/perf/perf /usr/bin/"
-    rm -r $DIR/tmp/$BASENAME
+    sudo rm -rf $DIR/tmp/$BASENAME
 fi
 
 # Add udev rules for custom drivers.
@@ -186,7 +186,7 @@ echo 'ATTR{name}=="vim2m", SYMLINK+="vim2m"' | sudo tee -a $DIR/etc/udev/rules.d
 # Build a disk image
 dd if=/dev/zero of=$RELEASE.img bs=1M seek=$SEEK count=1
 sudo mkfs.ext4 -F $RELEASE.img
-sudo mkdir -p /mnt/$DIR
-sudo mount -o loop $RELEASE.img /mnt/$DIR
-sudo cp -a $DIR/. /mnt/$DIR/.
-sudo umount /mnt/$DIR
+sudo mkdir -p /mnt/external_disk_2/hsinwei_tmp/$DIR
+sudo mount -o loop $RELEASE.img /mnt/external_disk_2/hsinwei_tmp/$DIR
+sudo cp -a $DIR/. /mnt/external_disk_2/hsinwei_tmp/$DIR/.
+sudo umount /mnt/external_disk_2/hsinwei_tmp/$DIR
