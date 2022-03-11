@@ -1291,6 +1291,19 @@ void execute_call(thread_t* th)
 	if (th->call_props.rerun > 0)
 		debug(" rerun=%d", th->call_props.rerun);
 	debug("\n");
+
+	if (strcmp("bpf$PROG_LOAD1", call->name) == 0) {
+		FILE *fp = fopen("/var/log/messages", "r");
+		char *line;
+		size_t size = 0;
+		do {
+			ssize_t line_size = getline(&line, &size, fp);
+			if (line_size < 0)
+				break;
+			debug("%s", line);
+		} while (!feof(fp));
+		fclose(fp);
+	}
 }
 
 #if SYZ_EXECUTOR_USES_SHMEM
