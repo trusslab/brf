@@ -740,7 +740,7 @@ func (a *BufferType) generate(r *randGen, s *state, dir Dir) (arg Arg, calls []*
 }
 
 func (a *BpfProgType) generate(r *randGen, s *state, dir Dir) (arg Arg, calls []*Call) {
-	data := bpfRuntimeFuzzer.GenBpfInsns()
+	data := bpfRuntimeFuzzer.GenBpfInsns(r)
 //	var data []byte
 //	if len(a.Values) == 1 {
 //		data = []byte(a.Values[0])

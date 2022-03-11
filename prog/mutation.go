@@ -366,7 +366,7 @@ func (t *BufferType) mutate(r *randGen, s *state, arg Arg, ctx ArgCtx) (calls []
 
 func (t *BpfProgType) mutate(r *randGen, s *state, arg Arg, ctx ArgCtx) (calls []*Call, retry, preserve bool) {
 	a := arg.(*DataArg)
-	a.data = bpfRuntimeFuzzer.GenBpfInsns()
+	a.data = bpfRuntimeFuzzer.GenBpfInsns(r)
 	return
 }
 

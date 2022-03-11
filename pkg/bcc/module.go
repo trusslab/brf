@@ -226,6 +226,35 @@ func (bpf *Module) GetInsns(name string) ([]byte, error) {
 	return unsafe.Slice(start, size), nil
 }
 
+type BtfInfo struct {
+	prog_btf_fd        int
+	func_info          []byte
+	func_info_cnt      int
+	func_info_rec_size int
+	line_info          []byte
+	line_info_cnt      int
+	line_info_rec_size int
+}
+
+func (bpf *Module) GetBtfInfo(name string) (BtfInfo, error) {
+	var b BtfInfo
+	nameCS := C.CString(name)
+	fd := unsafe.Pointer(&b.prog_btf_fd)
+	fi := unsafe.Pointer(&b.func_info)
+	fic := unsafe.Pointer(&b.func_info_cnt)
+	fisz := unsafe.Pointer(&b.func_info_rec_size)
+	li := unsafe.Pointer(&b.func_info)
+	lic := unsafe.Pointer(&b.func_info_cnt)
+	lisz := unsafe.Pointer(&b.func_info_rec_size)
+	defer C.free(unsafe.Pointer(nameCS))
+	ret := C.bool(C.bpf_get_btf_info(bpf.p, nameCS, fd, fi, fic, fisz, li, lic, lisz))
+	if ret != false  {
+		return BtfInfo{}, fmt.Errorf("Module: unable to find %s", name)
+	}
+
+	return b, nil
+}
+
 func (bpf *Module) load(name string, progType int, logLevel, logSize uint) (int, error) {
 	nameCS := C.CString(name)
 	defer C.free(unsafe.Pointer(nameCS))

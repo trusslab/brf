@@ -3,25 +3,13 @@ package prog
 import (
 	"bytes"
 	"fmt"
-	"math/rand"
 	"os"
 	"regexp"
-	//"time"
 
 	"github.com/google/syzkaller/pkg/bcc"
 	//"github.com/iovisor/gobpf/bcc"
 	//"github.com/google/syzkaller/prog"
 )
-
-
-// nOutOf returns true n out of outOf times.
-func nOutOf(n, outOf int) bool {
-	if n <= 0 || n >= outOf {
-		panic("bad probability")
-	}
-	v := rand.Intn(outOf)
-	return v < n
-}
 
 type PathLinePair struct {
 	Path string
@@ -529,19 +517,19 @@ func (brf *BpfRuntimeFuzzer) InitFromSrc(hMap map[string]*BpfHelperFunc, ptMap m
 	}
 }
 
-func (brf *BpfRuntimeFuzzer) genBpfHelperCallArg(s *BpfProgState, call *BpfCall, i int) bool {
+func (brf *BpfRuntimeFuzzer) genBpfHelperCallArg(r *randGen, s *BpfProgState, call *BpfCall, i int) bool {
 	argType := call.helper.Args[i]
 	fmt.Printf("gen %v arg[%v] %v ", call.helper.Name, i, argType)
 
-	if nOutOf(1, 3) && brf.genRandBpfHelperCall(s, argType) {
+	if r.nOutOf(1, 3) && brf.genRandBpfHelperCall(r, s, argType) {
 		call.args[i] = s.calls[len(s.calls)-1].ret
 		return true
-	} else if nOutOf(1, 2) && brf.genRandBpfCtxAccess(s, argType) {
+	} else if r.nOutOf(1, 2) && brf.genRandBpfCtxAccess(s, argType) {
 		ranges, _ := s.pt.ctxAccess.regTypeMap[argType]
-		n := rand.Intn(len(ranges))
+		n := r.Intn(len(ranges))
 		call.args[i] = ranges[n][2]
 		return true
-	} else if a, p, ok := brf.genRandDirectAccess(s, argType); ok {
+	} else if a, p, ok := brf.genRandDirectAccess(r, s, argType); ok {
 		call.prepare[i] = p
 		call.args[i] = a
 		return true
@@ -550,9 +538,9 @@ func (brf *BpfRuntimeFuzzer) genBpfHelperCallArg(s *BpfProgState, call *BpfCall,
 	}
 }
 
-func (brf *BpfRuntimeFuzzer) genRandDirectAccess(s *BpfProgState, argType string) (string, string, bool) {
+func (brf *BpfRuntimeFuzzer) genRandDirectAccess(r *randGen, s *BpfProgState, argType string) (string, string, bool) {
 	for i := 0; i < 5; i++ {
-		n := rand.Intn(len(brf.compatibleRegType[argType]))
+		n := r.Intn(len(brf.compatibleRegType[argType]))
 		a, p := brf.compatibleRegType[argType][n].Generate(s)
 		if a != "" {
 			fmt.Printf(" direct %v\n", brf.compatibleRegType[argType][n].String())
@@ -586,7 +574,7 @@ func bpfRetType(call *BpfCall) string {
 
 var recursive int
 
-func (brf *BpfRuntimeFuzzer) genBpfHelperCall(s *BpfProgState, helper *BpfHelperFunc) bool {
+func (brf *BpfRuntimeFuzzer) genBpfHelperCall(r *randGen, s *BpfProgState, helper *BpfHelperFunc) bool {
 	recursive += 1
 	if recursive > 100 {
 		return false
@@ -594,7 +582,7 @@ func (brf *BpfRuntimeFuzzer) genBpfHelperCall(s *BpfProgState, helper *BpfHelper
 
 	call := NewBpfCall(helper)
 	for i := 0; i < len(helper.Args); {
-		if brf.genBpfHelperCallArg(s, call, i) {
+		if brf.genBpfHelperCallArg(r, s, call, i) {
 			i++
 		}
 	}
@@ -609,7 +597,7 @@ func (brf *BpfRuntimeFuzzer) genBpfHelperCall(s *BpfProgState, helper *BpfHelper
 	return true
 }
 
-func (brf *BpfRuntimeFuzzer) genRandBpfHelperCall(s *BpfProgState, argType string) bool {
+func (brf *BpfRuntimeFuzzer) genRandBpfHelperCall(r *randGen, s *BpfProgState, argType string) bool {
 	var compatibleHelpers []int
 	for i, helper := range s.pt.Helpers {
 		for _, regType := range brf.compatibleRegType[argType] {
@@ -622,10 +610,9 @@ func (brf *BpfRuntimeFuzzer) genRandBpfHelperCall(s *BpfProgState, argType strin
 	if len(compatibleHelpers) == 0 {
 		return false
 	} else {
-		n := compatibleHelpers[rand.Intn(len(compatibleHelpers))]
-//	n := rand.Intn(len(s.pt.Helpers))
+		n := compatibleHelpers[r.Intn(len(compatibleHelpers))]
 		fmt.Printf(" helper ret\n")
-		return brf.genBpfHelperCall(s, s.pt.Helpers[n])
+		return brf.genBpfHelperCall(r, s, s.pt.Helpers[n])
 	}
 }
 
@@ -640,14 +627,12 @@ func WriteFile(s *bytes.Buffer, path string) {
 	outf.Write(s.Bytes())
 }
 
-//func (brf *BpfRuntimeFuzzer) GenBpfInsns() (*BpfProgState, bool) {
-func (brf *BpfRuntimeFuzzer) GenBpfInsns() []byte {
-	ok := false
+func (brf *BpfRuntimeFuzzer) GenBpfInsns(r *randGen) []byte {
 	var prog *BpfProgState
 	var m *bcc.Module
-	for ; m == nil; {
-		for ; !ok; {
-			prog, ok = brf.GenBpfFuncFuzzer()
+	for i := 0; m == nil && i < 20; i++ {
+		for ok := false; !ok; {
+			prog, ok = brf.GenBpfFuncFuzzer(r)
 		}
 
 		s := brf.WriteFuzzerSource(prog)
@@ -663,22 +648,20 @@ func (brf *BpfRuntimeFuzzer) GenBpfInsns() []byte {
 		}
 	}
 	return insns
-//	return prog, true
 }
 
-func (brf *BpfRuntimeFuzzer) GenBpfFuncFuzzer() (*BpfProgState, bool) {
-	//rand.Seed(time.Now().UnixNano())
+func (brf *BpfRuntimeFuzzer) GenBpfFuncFuzzer(r *randGen) (*BpfProgState, bool) {
 	var ptKeys []string
 	for name, _ := range brf.progTypeMap {
 		ptKeys = append(ptKeys, name)
 	}
-	pt := brf.progTypeMap[ptKeys[rand.Intn(len(ptKeys))]]
+	pt := brf.progTypeMap[ptKeys[r.Intn(len(ptKeys))]]
 
 	s := NewBpfProgState(brf, pt)
 
-	helper := pt.Helpers[rand.Intn(len(pt.Helpers))]
+	helper := pt.Helpers[r.Intn(len(pt.Helpers))]
 	fmt.Printf("gen %v %v\n", pt.Name, helper.Name)
-	return s, brf.genBpfHelperCall(s, helper)
+	return s, brf.genBpfHelperCall(r, s, helper)
 }
 
 func (brf *BpfRuntimeFuzzer) WriteFuzzerSource(prog *BpfProgState) *bytes.Buffer {

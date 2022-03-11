@@ -191,7 +191,7 @@ bpf_batch_flags = BPF_F_LOCK
 define BPF_LINE_INFO_SIZE	sizeof(struct bpf_line_info)
 define BPF_FUNC_INFO_SIZE	sizeof(struct bpf_func_info)
 
-type bpf_prog_brf_t[TYPE, ATTACH_TYPE, BTF_ID, PROG_FD] {
+type bpf_prog_brf_t[TYPE, ATTACH_TYPE] {
 	type			TYPE
 	ninsn			bytesize8[insns, int32]
 	insns			ptr64[in, bpf_insns]
@@ -207,12 +207,12 @@ type bpf_prog_brf_t[TYPE, ATTACH_TYPE, BTF_ID, PROG_FD] {
 	btf_fd			fd_btf[opt]
 	func_info_rec_size	const[BPF_FUNC_INFO_SIZE, int32]
 	func_info		ptr64[in, bpf_func_info]
-	func_info_cnt		len[func_info, int32]
+	func_info_cnt		const[0, int32]
 	line_info_rec_size	const[BPF_LINE_INFO_SIZE, int32]
 	line_info		ptr64[in, bpf_line_info]
-	line_info_cnt		len[line_info, int32]
-	attach_btf_id		BTF_ID
-	attach_prog_fd		PROG_FD
+	line_info_cnt		const[0, int32]
+	attach_btf_id		const[0, int32]
+	attach_prog_fd		const[0, int32]
 	pad			const[0, int32]
 	fd_array		ptr64[in, array[fd_bpf_map], opt]
 }
@@ -244,7 +244,7 @@ type bpf_prog_t[TYPE, ATTACH_TYPE, BTF_ID, PROG_FD] {
 }
 
 type bpf_prog bpf_prog_t[flags[bpf_prog_type, int32], flags[bpf_attach_type, int32], bpf_btf_id[opt], fd_bpf_prog[opt]]
-type bpf_prog_brf bpf_prog_brf_t[flags[bpf_prog_type, int32], flags[bpf_attach_type, int32], bpf_btf_id[opt], fd_bpf_prog[opt]]
+type bpf_prog_brf bpf_prog_brf_t[flags[bpf_prog_type, int32], flags[bpf_attach_type, int32]]
 
 bpf_licenses = "GPL", "syzkaller"
 bpf_kern_version = 0x40f00, 0x41000, 0x41100

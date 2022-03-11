@@ -286,7 +286,7 @@ func (w *execContext) writeArg(arg Arg) {
 		}
 		w.write(execArgData)
 		flags := uint64(len(data))
-		if isReadableDataType(a.Type().(*BufferType)) {
+		if _, ok := a.Type().(*BufferType); ok && isReadableDataType(a.Type().(*BufferType)) {
 			flags |= execArgDataReadable
 		}
 		w.write(flags)
