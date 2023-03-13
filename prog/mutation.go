@@ -49,6 +49,36 @@ func (p *Prog) Mutate(rs rand.Source, ncalls int, ct *ChoiceTable, corpus []*Pro
 			ok = ctx.removeCall()
 		}
 	}
+
+	toAppend := true
+	var toBeRemoved []int
+	var progFd *ResultArg
+	for i, c := range p.Calls {
+		if c.Meta.Name == "syz_bpf_prog_run_cnt" {
+			if i != len(p.Calls)-1 {
+				toBeRemoved = append(toBeRemoved, i)
+			} else {
+				toAppend = false
+			}
+		}
+		if progFd == nil && (c.Meta.Name == "syz_bpf_prog_load" || c.Meta.Name == "bpf$PROG_LOAD" || c.Meta.Name == "bpf$BPF_PROG_RAW_TRACEPOINT_LOAD") {
+			progFd = c.Ret
+		}
+	}
+	removed := 0
+	for _, i := range toBeRemoved {
+		p.RemoveCall(i-removed)
+		removed += 1
+	}
+	if progFd != nil && toAppend {
+		if len(p.Calls) == ncalls {
+			p.RemoveCall(ncalls - 1)
+		}
+		s := analyze(ctx.ct, ctx.corpus, p, p.Calls[len(p.Calls)-1])
+		c := r.generateBpfProgRunCntCall(s, progFd)
+		s.analyze(c)
+		p.Calls = append(p.Calls, c)
+	}
 	p.sanitizeFix()
 	p.debugValidate()
 	if got := len(p.Calls); got < 1 || got > ncalls {
@@ -77,6 +107,12 @@ func (ctx *mutator) splice() bool {
 	p0 := ctx.corpus[r.Intn(len(ctx.corpus))]
 	p0c := p0.Clone()
 	idx := r.Intn(len(p.Calls))
+	if Brf.isEnabled {
+		if len(p.Calls) < 4 {
+			return false
+		}
+		idx = r.Intn(len(p.Calls)-3) + 3
+	}
 	p.Calls = append(p.Calls[:idx], append(p0c.Calls, p.Calls[idx:]...)...)
 	for i := len(p.Calls) - 1; i >= ctx.ncalls; i-- {
 		p.RemoveCall(i)
@@ -133,6 +169,12 @@ func (ctx *mutator) insertCall() bool {
 		return false
 	}
 	idx := r.biasedRand(len(p.Calls)+1, 5)
+	if Brf.isEnabled {
+		if len(p.Calls) < 3 {
+			return false
+		}
+		idx = r.biasedRand(len(p.Calls)-2, 5)+3
+	}
 	var c *Call
 	if idx < len(p.Calls) {
 		c = p.Calls[idx]
@@ -153,6 +195,11 @@ func (ctx *mutator) removeCall() bool {
 		return false
 	}
 	idx := r.Intn(len(p.Calls))
+	if Brf.isEnabled {
+		if idx < 3 {
+			return false
+		}
+	}
 	p.RemoveCall(idx)
 	return true
 }
@@ -169,6 +216,24 @@ func (ctx *mutator) mutateArg() bool {
 		return false
 	}
 	c := p.Calls[idx]
+	if Brf.isEnabled {
+		if len(p.Calls) >= 3 && idx < 3 {
+			if (p.Calls[0].Meta != r.target.SyscallMap["syz_bpf_prog_open"] ||
+			    p.Calls[1].Meta != r.target.SyscallMap["syz_bpf_prog_load"] ||
+			    p.Calls[2].Meta != r.target.SyscallMap["syz_bpf_prog_attach"]) ||
+			   (p.Calls[0].Args[0].(*PointerArg).Res == nil ||
+			    p.Calls[1].Args[0].(*PointerArg).Res == nil ||
+			    p.Calls[2].Args[0].(*PointerArg).Res == nil) {
+				return false
+			}
+			path := string(c.Args[0].(*PointerArg).Res.(*DataArg).data)
+			ps := Brf.MutBpfSeedProg(r, path)
+			p.Calls[0].Args[0].(*PointerArg).Res.(*DataArg).data = []byte(ps.Path)
+			p.Calls[1].Args[0].(*PointerArg).Res.(*DataArg).data = []byte(ps.Path)
+			p.Calls[2].Args[0].(*PointerArg).Res.(*DataArg).data = []byte(ps.Path)
+			return true
+		}
+	}
 	updateSizes := true
 	for stop, ok := false, false; !stop; stop = ok && r.oneOf(3) {
 		ok = true
@@ -361,12 +426,6 @@ func (t *BufferType) mutate(r *randGen, s *state, arg Arg, ctx ArgCtx) (calls []
 	default:
 		panic("unknown buffer kind")
 	}
-	return
-}
-
-func (t *BpfProgType) mutate(r *randGen, s *state, arg Arg, ctx ArgCtx) (calls []*Call, retry, preserve bool) {
-	a := arg.(*DataArg)
-	a.data = bpfRuntimeFuzzer.GenBpfInsns(r)
 	return
 }
 
@@ -652,10 +711,6 @@ func (t *BufferType) getMutationPrio(target *Target, arg Arg, ignoreSpecial bool
 		// These are effectively consts (and frequently file names).
 		return dontMutate, false
 	}
-	return 0.8 * maxPriority, false
-}
-
-func (t *BpfProgType) getMutationPrio(target *Target, arg Arg, ignoreSpecial bool) (prio float64, stopRecursion bool) {
 	return 0.8 * maxPriority, false
 }
 

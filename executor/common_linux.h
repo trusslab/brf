@@ -7,9 +7,22 @@
 #include <sys/syscall.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include <linux/perf_event.h>
+
+#if SYZ_EXECUTOR || __NR_syz_bpf_prog_load
+
+/* type for BPF_ENABLE_STATS */
+enum bpf_stats_type {
+        /* enabled run_time_ns and run_cnt */
+        BPF_STATS_RUN_TIME = 0,
+};
+#include <bpf/bpf.h>
+#include <bpf/libbpf.h>
+
+#endif
 
 #if SYZ_EXECUTOR
-const int kExtraCoverSize = 256 << 10;
+const int kExtraCoverSize = 256 << 13;//10;
 struct cover_t;
 static void cover_reset(cover_t* cov);
 #endif
@@ -3682,6 +3695,11 @@ static void sandbox_common()
 	rlim.rlim_cur = rlim.rlim_max = 256; // see kMaxFd
 	setrlimit(RLIMIT_NOFILE, &rlim);
 
+	bpf_enable_stats(BPF_STATS_RUN_TIME);
+	//if (ret) {
+	//	fprintf(stderr, "syz_bpf_prog_load: enable stats ret %d, errno %d\n", ret, errno);
+	//}
+
 	// CLONE_NEWNS/NEWCGROUP cause EINVAL on some systems,
 	// so we do them separately of clone in do_sandbox_namespace.
 	if (unshare(CLONE_NEWNS)) {
@@ -5281,6 +5299,760 @@ static long syz_clone3(volatile long a0, volatile long a1)
 	__atomic_store_n(&clone_ongoing, 1, __ATOMIC_RELAXED);
 #endif
 	return handle_clone_ret((long)syscall(__NR_clone3, &clone_args, copy_size));
+}
+
+#endif
+
+#if SYZ_EXECUTOR || __NR_syz_bpf_prog_load
+
+#include <linux/pkt_sched.h>
+#include <linux/pkt_cls.h>
+#include <linux/lwtunnel.h>
+//#include <bpf/bpf.h>
+//#include <bpf/libbpf.h>
+
+#define MAX_ERRNO 4095
+
+#define IS_ERR_VALUE(x) ((x) >= (unsigned long)-MAX_ERRNO)
+
+static inline void* ERR_PTR(long error_)
+{
+	return (void*)error_;
+}
+
+static inline long PTR_ERR(const void* ptr)
+{
+	return (long)ptr;
+}
+
+static inline bool IS_ERR(const void* ptr)
+{
+	return IS_ERR_VALUE((unsigned long)ptr);
+}
+
+struct bpf_res {
+	int prog_fds[256];
+	int prog_num;
+	int map_fds[256];
+	int map_num;
+	int btf_fds[256];
+	int btf_num;
+};
+
+#define TEST_ATTACH 1
+#if defined TEST_ATTACH
+long perf_event_open(struct perf_event_attr* event_attr, pid_t pid, int cpu,
+		     int group_fd, unsigned long flags)
+{
+    return syscall(__NR_perf_event_open, event_attr, pid, cpu, group_fd, flags);
+}
+
+#define NLMSG_TAIL(nmsg) \
+	((struct rtattr *) (((void *) (nmsg)) + NLMSG_ALIGN((nmsg)->nlmsg_len)))
+
+#define RTA_TAIL(rta) \
+		((struct rtattr *) (((void *) (rta)) + \
+				    RTA_ALIGN((rta)->rta_len)))
+
+int addattr_l(struct nlmsghdr *n, int maxlen, int type, const void *data,
+	      int alen)
+{
+	int len = RTA_LENGTH(alen);
+	struct rtattr *rta;
+
+	if ((int)(NLMSG_ALIGN(n->nlmsg_len) + RTA_ALIGN(len)) > maxlen) {
+		fprintf(stderr,
+			"addattr_l ERROR: message exceeded bound of %d\n",
+			maxlen);
+		return -1;
+	}
+	rta = NLMSG_TAIL(n);
+	rta->rta_type = type;
+	rta->rta_len = len;
+	if (alen)
+		memcpy(RTA_DATA(rta), data, alen);
+	n->nlmsg_len = NLMSG_ALIGN(n->nlmsg_len) + RTA_ALIGN(len);
+	return 0;
+}
+
+int addraw_l(struct nlmsghdr *n, int maxlen, const void *data, int len)
+{
+	if ((int)(NLMSG_ALIGN(n->nlmsg_len) + NLMSG_ALIGN(len)) > maxlen) {
+		fprintf(stderr,
+			"addraw_l ERROR: message exceeded bound of %d\n",
+			maxlen);
+		return -1;
+	}
+
+	memcpy(NLMSG_TAIL(n), data, len);
+	memset((void *) NLMSG_TAIL(n) + len, 0, NLMSG_ALIGN(len) - len);
+	n->nlmsg_len = NLMSG_ALIGN(n->nlmsg_len) + NLMSG_ALIGN(len);
+	return 0;
+}
+
+int addattr32(struct nlmsghdr *n, int maxlen, int type, __u32 data)
+{
+	return addattr_l(n, maxlen, type, &data, sizeof(__u32));
+}
+
+int addattrstrz(struct nlmsghdr *n, int maxlen, int type, const char *str)
+{
+	return addattr_l(n, maxlen, type, str, strlen(str)+1);
+}
+
+int rta_addattr32(struct rtattr *rta, int maxlen, int type, __u32 data)
+{
+	int len = RTA_LENGTH(4);
+	struct rtattr *subrta;
+
+	if ((int)(RTA_ALIGN(rta->rta_len) + len) > maxlen) {
+		fprintf(stderr,
+			"rta_addattr32: Error! max allowed bound %d exceeded\n",
+			maxlen);
+		return -1;
+	}
+	subrta = (struct rtattr *)(((char *)rta) + RTA_ALIGN(rta->rta_len));
+	subrta->rta_type = type;
+	subrta->rta_len = len;
+	memcpy(RTA_DATA(subrta), &data, 4);
+	rta->rta_len = NLMSG_ALIGN(rta->rta_len) + len;
+	return 0;
+}
+
+int rta_addattr_l(struct rtattr *rta, int maxlen, int type,
+		  const void *data, int alen)
+{
+	struct rtattr *subrta;
+	int len = RTA_LENGTH(alen);
+
+	if ((int)(RTA_ALIGN(rta->rta_len) + RTA_ALIGN(len)) > maxlen) {
+		fprintf(stderr,
+			"rta_addattr_l: Error! max allowed bound %d exceeded\n",
+			maxlen);
+		return -1;
+	}
+	subrta = (struct rtattr *)(((char *)rta) + RTA_ALIGN(rta->rta_len));
+	subrta->rta_type = type;
+	subrta->rta_len = len;
+	if (alen)
+		memcpy(RTA_DATA(subrta), data, alen);
+	rta->rta_len = NLMSG_ALIGN(rta->rta_len) + RTA_ALIGN(len);
+	return 0;
+}
+
+int rta_addattr16(struct rtattr *rta, int maxlen, int type, __u16 data)
+{
+	return rta_addattr_l(rta, maxlen, type, &data, sizeof(__u16));
+}
+
+struct rtattr *rta_nest(struct rtattr *rta, int maxlen, int type)
+{
+	struct rtattr *nest = RTA_TAIL(rta);
+
+	rta_addattr_l(rta, maxlen, type, NULL, 0);
+	nest->rta_type |= NLA_F_NESTED;
+
+	return nest;
+}
+
+int rta_nest_end(struct rtattr *rta, struct rtattr *nest)
+{
+	nest->rta_len = (uintptr_t)RTA_TAIL(rta) - (uintptr_t)nest;
+
+	return rta->rta_len;
+}
+
+static int lwt_parse_bpf(struct rtattr *rta, size_t len, int prog_fd,
+			 int attr, const enum bpf_prog_type bpf_type)
+{
+	struct rtattr *nest;
+	const char *annotation = "func";
+
+	nest = rta_nest(rta, len, attr);
+	rta_addattr32(rta, len, LWT_BPF_PROG_FD, prog_fd);
+	rta_addattr_l(rta, len, LWT_BPF_PROG_NAME, annotation,
+		      strlen(annotation) + 1);
+	rta_nest_end(rta, nest);
+	return 0;
+}
+
+struct rtnl_handle {
+        int                     fd;
+        struct sockaddr_nl      local;
+        struct sockaddr_nl      peer;
+        __u32                   seq;
+        __u32                   dump;
+        int                     proto;
+        FILE                   *dump_fp;
+#define RTNL_HANDLE_F_LISTEN_ALL_NSID           0x01
+#define RTNL_HANDLE_F_SUPPRESS_NLERR            0x02
+#define RTNL_HANDLE_F_STRICT_CHK                0x04
+        int                     flags;
+};
+
+struct rtnl_handle rth = { .fd = -1 };
+
+static int __rtnl_talk_iov(struct rtnl_handle *rtnl, struct iovec *iov,
+			   size_t iovlen, struct nlmsghdr **answer,
+			   bool show_rtnl_err)
+{
+	struct sockaddr_nl nladdr = { .nl_family = AF_NETLINK };
+	struct msghdr msg = {
+		.msg_name = &nladdr,
+		.msg_namelen = sizeof(nladdr),
+		.msg_iov = iov,
+		.msg_iovlen = iovlen,
+	};
+	unsigned int seq = 0;
+	struct nlmsghdr *h;
+	size_t i;
+	int status;
+
+	for (i = 0; i < iovlen; i++) {
+		h = (struct nlmsghdr*)iov[i].iov_base;
+		h->nlmsg_seq = seq = ++rtnl->seq;
+		if (answer == NULL)
+			h->nlmsg_flags |= NLM_F_ACK;
+	}
+
+	status = sendmsg(rtnl->fd, &msg, 0);
+	if (status < 0) {
+		perror("Cannot talk to rtnetlink");
+		return -1;
+	}
+	return 0;
+}
+
+static int __rtnl_talk(struct rtnl_handle *rtnl, struct nlmsghdr *n,
+		       struct nlmsghdr **answer,
+		       bool show_rtnl_err)
+{
+	struct iovec iov = {
+		.iov_base = n,
+		.iov_len = n->nlmsg_len
+	};
+
+	return __rtnl_talk_iov(rtnl, &iov, 1, answer, show_rtnl_err);
+}
+
+int rtnl_talk(struct rtnl_handle *rtnl, struct nlmsghdr *n,
+	      struct nlmsghdr **answer)
+{
+	return __rtnl_talk(rtnl, n, answer, true);
+}
+
+void rtnl_close(struct rtnl_handle *rth)
+{
+	if (rth->fd >= 0) {
+		close(rth->fd);
+		rth->fd = -1;
+	}
+}
+
+int rcvbuf = 1024 * 1024;
+
+int rtnl_open_byproto(struct rtnl_handle *rth, unsigned int subscriptions,
+		      int protocol)
+{
+	socklen_t addr_len;
+	int sndbuf = 32768;
+	int one = 1;
+
+	memset(rth, 0, sizeof(*rth));
+
+	rth->proto = protocol;
+	rth->fd = socket(AF_NETLINK, SOCK_RAW | SOCK_CLOEXEC, protocol);
+	if (rth->fd < 0) {
+		perror("Cannot open netlink socket");
+		return -1;
+	}
+
+	if (setsockopt(rth->fd, SOL_SOCKET, SO_SNDBUF,
+		       &sndbuf, sizeof(sndbuf)) < 0) {
+		perror("SO_SNDBUF");
+		goto err;
+	}
+
+	if (setsockopt(rth->fd, SOL_SOCKET, SO_RCVBUF,
+		       &rcvbuf, sizeof(rcvbuf)) < 0) {
+		perror("SO_RCVBUF");
+		goto err;
+	}
+
+	/* Older kernels may no support extended ACK reporting */
+	setsockopt(rth->fd, SOL_NETLINK, NETLINK_EXT_ACK,
+		   &one, sizeof(one));
+
+	memset(&rth->local, 0, sizeof(rth->local));
+	rth->local.nl_family = AF_NETLINK;
+	rth->local.nl_groups = subscriptions;
+
+	if (bind(rth->fd, (struct sockaddr *)&rth->local,
+		 sizeof(rth->local)) < 0) {
+		perror("Cannot bind netlink socket");
+		goto err;
+	}
+	addr_len = sizeof(rth->local);
+	if (getsockname(rth->fd, (struct sockaddr *)&rth->local,
+			&addr_len) < 0) {
+		perror("Cannot getsockname");
+		goto err;
+	}
+	if (addr_len != sizeof(rth->local)) {
+		fprintf(stderr, "Wrong address length %d\n", addr_len);
+		goto err;
+	}
+	if (rth->local.nl_family != AF_NETLINK) {
+		fprintf(stderr, "Wrong address family %d\n",
+			rth->local.nl_family);
+		goto err;
+	}
+	rth->seq = time(NULL);
+	return 0;
+err:
+	rtnl_close(rth);
+	return -1;
+}
+
+int rtnl_open(struct rtnl_handle *rth, unsigned int subscriptions)
+{
+	return rtnl_open_byproto(rth, subscriptions, NETLINK_ROUTE);
+}
+
+//#define MAX_MSG 16384
+#define MAX_MSG 8192
+
+static int bpf_program__attach_tc(int prog_fd, const char* file)
+{
+	if (rtnl_open(&rth, 0) < 0) {
+		fprintf(stderr, "Cannot open rtnetlink\n");
+		return -1;
+	}
+
+	struct {
+		struct nlmsghdr	n;
+		struct tcmsg		t;
+		char			buf[MAX_MSG];
+	} req;
+
+	__u32 prio = 0;
+	__u32 protocol = htons(ETH_P_ALL);
+
+	req.n.nlmsg_len = NLMSG_LENGTH(sizeof(struct tcmsg)),
+	req.n.nlmsg_flags = NLM_F_REQUEST | NLM_F_EXCL | NLM_F_CREATE,
+	req.n.nlmsg_type = RTM_NEWTFILTER,
+	req.t.tcm_family = AF_UNSPEC,
+	req.t.tcm_info = TC_H_MAKE(prio<<16, protocol);
+	req.t.tcm_parent = TC_H_MAKE(TC_H_CLSACT, TC_H_MIN_INGRESS);
+
+	int idx = 0;
+	req.t.tcm_ifindex = idx;
+
+	const char *annotation = "func";
+	struct rtattr *tail = (struct rtattr *)(((void *)&req.n) + NLMSG_ALIGN(req.n.nlmsg_len));
+	addattr_l(&req.n, MAX_MSG, TCA_OPTIONS, NULL, 0);
+	addattr32(&req.n, MAX_MSG, TCA_BPF_FD, prog_fd);
+	addattrstrz(&req.n, MAX_MSG, TCA_BPF_NAME, annotation);
+	addattr32(&req.n, MAX_MSG, TCA_BPF_FLAGS, TCA_BPF_FLAG_ACT_DIRECT);
+	tail->rta_len = (((uintptr_t)&req.n) + req.n.nlmsg_len) - (uintptr_t)tail;
+	
+	if (rtnl_talk(&rth, &req.n, NULL) < 0) {
+		fprintf(stderr, "We have an error talking to the kernel\n");
+		return -2;
+	}
+
+	rtnl_close(&rth);
+	return 0;
+}
+
+static int bpf_program__attach_lwt(int prog_fd, const char* file)
+{
+	if (rtnl_open(&rth, 0) < 0) {
+		fprintf(stderr, "Cannot open rtnetlink\n");
+		return -1;
+	}
+
+	struct {
+		struct nlmsghdr	n;
+		struct rtmsg		r;
+		char			buf[4096];
+	} req;
+	
+	req.n.nlmsg_len = NLMSG_LENGTH(sizeof(struct rtmsg)),
+	req.n.nlmsg_flags = NLM_F_REQUEST | NLM_F_CREATE | NLM_F_EXCL,
+	req.n.nlmsg_type = RTM_NEWROUTE,
+	req.r.rtm_family = AF_UNSPEC,
+	req.r.rtm_table = RT_TABLE_MAIN,
+	req.r.rtm_protocol = RTPROT_BOOT;
+	req.r.rtm_scope = RT_SCOPE_UNIVERSE;
+	req.r.rtm_type = RTN_UNICAST;
+
+	char buf[1024];
+	struct rtattr *rta = (struct rtattr *)buf;
+
+	rta->rta_type = RTA_ENCAP;
+	rta->rta_len = RTA_LENGTH(0);
+
+	size_t len = sizeof(buf);
+	struct rtattr *nest = rta_nest(rta, len, RTA_ENCAP);
+
+	if (strstr(file, "lwt_in")) {
+		lwt_parse_bpf(rta, len, prog_fd, LWT_BPF_IN,
+				  BPF_PROG_TYPE_LWT_IN);
+	} else if (strstr(file, "lwt_out")) {
+		lwt_parse_bpf(rta, len, prog_fd, LWT_BPF_OUT,
+				  BPF_PROG_TYPE_LWT_OUT);
+	} else if (strstr(file, "lwt_xmit")) {
+		lwt_parse_bpf(rta, len, prog_fd, LWT_BPF_XMIT,
+				  BPF_PROG_TYPE_LWT_XMIT);
+	}
+
+	rta_nest_end(rta, nest);
+	rta_addattr16(rta, len, RTA_ENCAP_TYPE, LWTUNNEL_ENCAP_BPF);
+
+	if (rta->rta_len > RTA_LENGTH(0))
+		addraw_l(&req.n, 1024
+			 , RTA_DATA(rta), RTA_PAYLOAD(rta));
+
+	int idx = 1;
+	addattr32(&req.n, sizeof(req), RTA_OIF, idx);
+
+	if (rtnl_talk(&rth, &req.n, NULL) < 0) {
+		fprintf(stderr, "Cannot open rtnetlink\n");
+		return -2;
+	}
+
+	rtnl_close(&rth);
+
+	return 0;
+}
+#endif
+
+#define container_of(ptr, type, member) ({                      \
+                const typeof( ((type *)0)->member ) *__mptr = (ptr);    \
+                (type *)( (char *)__mptr - offsetof(type,member) );})
+
+struct list_head {
+	struct list_head *next, *prev;
+};
+
+struct elf_state {
+	int fd;
+	const void *obj_buf;
+	size_t obj_buf_sz;
+	//Elf *elf;
+	//Elf64_Ehdr *ehdr;
+	//Elf_Data *symbols;
+	//Elf_Data *st_ops_data;
+	void *elf;
+	void *ehdr;
+	void *symbols;
+	void *st_ops_data;
+	size_t shstrndx; /* section index for section name strings */
+	size_t strtabidx;
+	struct elf_sec_desc *secs;
+	int sec_cnt;
+	int maps_shndx;
+	int btf_maps_shndx;
+	__u32 btf_maps_sec_btf_id;
+	int text_shndx;
+	int symbols_shndx;
+	int st_ops_shndx;
+};
+
+struct bpf_object {
+	char name[BPF_OBJ_NAME_LEN];
+	char license[64];
+	__u32 kern_version;
+
+	struct bpf_program *programs;
+	size_t nr_programs;
+	struct bpf_map *maps;
+	size_t nr_maps;
+	size_t maps_cap;
+
+	char *kconfig;
+	struct extern_desc *externs;
+	int nr_extern;
+	int kconfig_map_idx;
+
+	bool loaded;
+	bool has_subcalls;
+	bool has_rodata;
+
+	struct bpf_gen *gen_loader;
+
+	/* Information when doing ELF related work. Only valid if efile.elf is not NULL */
+	struct elf_state efile;
+	/*
+	 * All loaded bpf_object are linked in a list, which is
+	 * hidden to caller. bpf_objects__<func> handlers deal with
+	 * all objects.
+	 */
+	struct list_head list;
+
+	struct btf *btf;
+	struct btf_ext *btf_ext;
+
+	/* Parse and load BTF vmlinux if any of the programs in the object need
+	 * it at load time.
+	 */
+	struct btf *btf_vmlinux;
+	/* Path to the custom BTF to be used for BPF CO-RE relocations as an
+	 * override for vmlinux BTF.
+	 */
+	char *btf_custom_path;
+	/* vmlinux BTF override for CO-RE relocations */
+	struct btf *btf_vmlinux_override;
+	/* Lazily initialized kernel module BTFs */
+	struct module_btf *btf_modules;
+	bool btf_modules_loaded;
+	size_t btf_module_cnt;
+	size_t btf_module_cap;
+
+	/* optional log settings passed to BPF_BTF_LOAD and BPF_PROG_LOAD commands */
+	char *log_buf;
+	size_t log_size;
+	__u32 log_level;
+
+	void *priv;
+	bpf_object_clear_priv_t clear_priv;
+
+	int *fd_array;
+	size_t fd_array_cap;
+	size_t fd_array_cnt;
+
+	char path[];
+};
+
+static struct list_head *bpf_object_list = NULL;
+
+static struct bpf_object *find_bpf_object_by_path(const char* path)
+{
+	if (!bpf_object_list) {
+		fprintf(stderr, "find_bpf_object_by_path: list not initialized\n");
+		return NULL;
+	}
+
+	struct list_head* node;
+	for (node = bpf_object_list->next; node != bpf_object_list; node = node->next) {
+		struct bpf_object *bo = container_of(node, struct bpf_object, list);
+		fprintf(stderr, "find_bpf_object_by_path: %s\n", bo->path);
+		if (strcmp(path, bo->path) == 0) {
+			return bo;
+		}
+	}
+	fprintf(stderr, "find_bpf_object_by_path: empty list\n");
+	return NULL;
+}
+
+static long syz_bpf_prog_open(volatile long a0)
+{
+	const char* file = (char*)a0;
+	struct bpf_object* bo = bpf_object__open(file);
+	if (IS_ERR(bo) || !bo) {
+		fprintf(stderr, "syz_bpf_prog_load: failed to open bpf prog, errno %ld\n", PTR_ERR(bo));
+		return -1;
+	}
+
+	if (bpf_object_list == NULL) {
+		bpf_object_list = bo->list.prev;
+	}
+
+	return 0;
+}
+
+static long _syz_bpf_prog_attach(const char *file, struct bpf_object *bo, int prog_fd);
+
+static long syz_bpf_prog_load(volatile long a0, volatile long a1)
+{
+	int ret = 0;
+	const char* file = (char*)a0;
+
+	struct bpf_object* bo = find_bpf_object_by_path(file);
+	if (bo == NULL) {
+		fprintf(stderr, "failed to retrieve bpf_object\n");
+		return -1;
+	}
+
+	ret = bpf_object__load(bo);
+	if (ret) {
+		fprintf(stderr, "syz_bpf_prog_load: failed to load bpf prog, errno %d\n", ret);
+		errno = 2;
+		return -1;
+	}
+
+	struct bpf_res* res = (struct bpf_res*)a1;
+
+	int i = 0;
+	struct bpf_program* prog;
+	bpf_object__for_each_program(prog, bo)
+	{
+		fprintf(stderr, "bpf_prog_name: %s\n", bpf_program__name(prog));
+		int prog_fd = bpf_program__fd(prog);
+		fprintf(stderr, "bpf_prod_fds[%d]=%d\n", i, prog_fd);
+		res->prog_fds[i++] = prog_fd;
+	}
+
+	res->prog_num = i;
+	// fill the whole fds since they might be picked up by syzkaller
+	for (int j = res->prog_num; j < 256; j++) {
+		res->prog_fds[j] = res->prog_fds[j%res->prog_num];
+	}
+
+	i = 0;
+	struct bpf_map* map;
+	bpf_object__for_each_map(map, bo)
+	{
+		res->map_fds[i++] = bpf_map__fd(map);
+		fprintf(stderr, "bpf_map_fds[%d]=%d\n", i - 1, res->map_fds[i - 1]);
+	}
+	res->map_num = i;
+	// fill the whole fds since they might be picked up by syzkaller
+	for (int j = res->map_num; j < 256; j++) {
+		res->map_fds[j] = res->map_fds[j%res->map_num];
+	}
+
+	res->btf_num = 1;
+	res->btf_fds[0] = bpf_object__btf_fd(bo);
+	fprintf(stderr, "bpf_btf_fds[0]=%d\n", res->btf_fds[0]);
+	// fill the whole fds since they might be picked up by syzkaller
+	for (int j = res->btf_num; j < 256; j++) {
+		res->btf_fds[j] = res->btf_fds[j%res->btf_num];
+	}
+	return res->prog_fds[0];
+}
+
+static long _syz_bpf_prog_attach(const char *file, struct bpf_object *bo, int prog_fd)
+{
+	int ret = 0;
+	struct bpf_link* link = NULL;
+	struct bpf_program* prog = bpf_object__next_program(bo, NULL);
+
+	if (strstr(file, "sk_filter")) {
+		int sock = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
+		ret = setsockopt(sock, SOL_SOCKET, SO_ATTACH_BPF, &prog_fd, sizeof(prog_fd));
+		if (ret < 0) {
+			goto err;
+		}
+
+		char buffer[2048];
+		recv(sock, buffer, 2048, 0);
+	} else if (strstr(file, "sk_reuseport")) {
+		int sock = socket(AF_INET, SOCK_DGRAM, 0);
+		int optval = 1;
+		setsockopt(sock, SOL_SOCKET, SO_REUSEPORT, &optval, sizeof(optval));
+		ret = setsockopt(sock, SOL_SOCKET, SO_ATTACH_REUSEPORT_EBPF, &prog_fd, sizeof(prog_fd));
+		if (ret < 0) {
+			goto err;
+		}
+
+		char buffer[2048];
+		recv(sock, buffer, 2048, 0);
+	} else if (strstr(file, "flow_dissector")) {
+		ret = bpf_prog_attach(prog_fd, 0, BPF_FLOW_DISSECTOR, 0);
+	} else if (strstr(file, "lirc_mode2")) {
+		int lirc_fd = open("/dev/lirc0", O_RDWR);
+		if (lirc_fd < 0) {
+			fprintf(stderr, "syz_bpf_prog_load: failed to open rc-loopback, errno %d\n", errno);
+		}
+		ret = bpf_prog_attach(prog_fd, lirc_fd, BPF_LIRC_MODE2, 0);
+		if (ret < 0) {
+			goto err;
+		}
+
+		int testir1 = 0x1dead;
+		size_t r2 = write(lirc_fd, &testir1, sizeof(testir1));
+		(void)r2;
+		bpf_prog_detach(prog_fd, BPF_LIRC_MODE2);
+		close(lirc_fd);
+	} else if (strstr(file, "sk_skb")) {
+		LIBBPF_OPTS(bpf_map_create_opts, opts);
+		//int sock_map = bpf_create_map(BPF_MAP_TYPE_SOCKMAP, sizeof(int), sizeof(int), 2, 0);
+		int sock_map = bpf_map_create(BPF_MAP_TYPE_SOCKMAP, "test_map", sizeof(int), sizeof(int), 2, &opts);
+		ret = bpf_prog_attach(prog_fd, sock_map, BPF_SK_SKB_STREAM_PARSER, 0);
+	} else if (strstr(file, "sk_msg")) {
+		LIBBPF_OPTS(bpf_map_create_opts, opts);
+		//int sock_map = bpf_create_map(BPF_MAP_TYPE_SOCKMAP, sizeof(int), sizeof(int), 2, 0);
+		int sock_map = bpf_map_create(BPF_MAP_TYPE_SOCKMAP, "test_map", sizeof(int), sizeof(int), 2, &opts);
+		ret = bpf_prog_attach(prog_fd, sock_map, BPF_SK_MSG_VERDICT, 0);
+	} else if (strstr(file, "tc")) {
+		ret = bpf_program__attach_tc(prog_fd, file);
+	} else if (strstr(file, "lwt")) {
+		ret = bpf_program__attach_lwt(prog_fd, file);
+	} else if (strstr(file, "cg_") || strstr(file, "sock_ops")) {
+		int cgroup_fd = open("/sys/fs/cgroup", O_RDONLY);
+		link = bpf_program__attach_cgroup(prog, cgroup_fd);
+	} else if (strstr(file, "perf_event")) {
+		struct perf_event_attr attr_type_hw = {
+			.type = PERF_TYPE_HARDWARE,
+			.config = PERF_COUNT_HW_CPU_CYCLES,
+			.sample_freq = 50,
+			.inherit = 1,
+			.freq = 1,
+		};
+		int pfd = perf_event_open(&attr_type_hw, 0, -1, -1, 0);
+		link = bpf_program__attach_perf_event(prog, pfd);
+	} else if (strstr(file, "xdp")) {
+		link = bpf_program__attach_xdp(prog, 1);
+	} else {
+		link = bpf_program__attach(prog);
+	}
+
+
+	if (link == NULL) {
+		if (ret) {
+err:
+			fprintf(stderr, "syz_bpf_prog_attach(1): failed to attach %s(%d), errno %d\n", file, prog_fd, errno);
+			errno = 3;
+			return -1;
+		}
+		fprintf(stderr, "syz_bpf_prog_attach succeeds\n");
+		return ret;
+	} else {
+		if (IS_ERR(link)) {
+			fprintf(stderr, "syz_bpf_prog_attach(2): failed to attach %s(%d), errno %ld\n", file, prog_fd, PTR_ERR(link));
+			errno = 3;
+			return -1;
+		}
+		fprintf(stderr, "syz_bpf_prog_attach succeeds\n");
+		return bpf_link__fd(link);
+	}
+}
+
+static long syz_bpf_prog_attach(volatile long a0, volatile long a1)
+{
+	const char* file = (char*)a0;
+	int prog_fd = (int)a1;
+
+	struct bpf_object* bo = find_bpf_object_by_path(file);
+	if (bo == NULL) {
+		fprintf(stderr, "failed to retrieve bpf_object\n");
+		return -1;
+	}
+
+	return _syz_bpf_prog_attach(file, bo, prog_fd);
+}
+
+static long syz_bpf_prog_run_cnt(volatile long a0)
+{
+	int prog_fd = (int)a0;
+	struct bpf_prog_info info = {};
+	__u32 info_len = sizeof(info);
+	int err;
+
+	err = bpf_obj_get_info_by_fd(prog_fd, &info, &info_len);
+	if (err < 0) {
+		for (int i = 0; i < 256; i++) {
+			err = bpf_obj_get_info_by_fd(i, &info, &info_len);
+			if (err == 0) {
+				break;
+			}
+		}
+	}
+	errno = (info.run_cnt > 0)? 0 : 1;
+	fprintf(stderr, "err %d errno %d run_cnt %lld\n", err, errno, info.run_cnt);
+	return -1;
 }
 
 #endif

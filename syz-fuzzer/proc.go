@@ -59,8 +59,310 @@ func newProc(fuzzer *Fuzzer, pid int) (*Proc, error) {
 	return proc, nil
 }
 
+func (proc *Proc) updateBrfBpfStats(p *prog.Prog, info *ipc.ProgInfo) {
+	if len(p.Calls) < 3 || (p.Calls[0].Meta.Name != "syz_bpf_prog_open" && p.Calls[1].Meta.Name != "syz_bpf_prog_load" && p.Calls[2].Meta.Name != "syz_bpf_prog_attach")  {
+		return
+	}
+
+	var typs []int
+	if info != nil {
+		if info.Calls[1].Errno == 0 {
+			typs = append(typs, 0)
+		} else if info.Calls[1].Errno == 2 {
+			typs = append(typs, 1)
+		}
+		if info.Calls[2].Errno == 0 {
+			typs = append(typs, 2)
+		} else if info.Calls[2].Errno == 3 {
+			typs = append(typs, 3)
+		}
+	}
+
+	for i, c := range p.Calls {
+		if c.Meta.Name == "syz_bpf_prog_run_cnt" && i == len(p.Calls)-1 {
+			nrun := uint64(info.Calls[i].Errno)
+			log.Logf(1, "bpf nrun %v", nrun)
+			if nrun == 0 {
+				atomic.AddUint64(&proc.fuzzer.brfStats[BPF_BRF_NRUN][0], 1)
+			}
+			maxNrun := atomic.LoadUint64(&proc.fuzzer.brfStats[BPF_BRF_NRUN][1])
+			if maxNrun < nrun {
+				atomic.CompareAndSwapUint64(&proc.fuzzer.brfStats[BPF_BRF_NRUN][1], maxNrun, nrun)
+			}
+			continue
+		}
+	}
+
+	if _, ok := p.Calls[0].Args[0].(*prog.PointerArg); !ok {
+		return
+	}
+	if p.Calls[0].Args[0].(*prog.PointerArg).Res == nil {
+		return
+	}
+	path := string(p.Calls[0].Args[0].(*prog.PointerArg).Res.(*prog.DataArg).Data())
+	ps := prog.RestoreBpfSeedProg(prog.Brf, path)
+	if ps == nil {
+		log.Logf(3, "updateBpfStats failed to restore bpf prog")
+		return
+	}
+
+	pi := stringToBrfStat(ps.ProgTypeEnum())
+	if pi == 235 {
+		panic(fmt.Sprintf("prog %v\n", ps.ProgTypeEnum()))
+	}
+	for _, typ := range typs {
+		//log.Logf(3, "updateBpfStats pt")
+		atomic.AddUint64(&proc.fuzzer.brfStats[pi][typ], 1)
+	}
+	//log.Logf(3, "updateBpfStats ht %v", len(ps.Calls))
+	for _, h := range ps.Calls {
+		//log.Logf(3, "updateBpfStats ht")
+		hi := stringToBrfStat(h.Helper.Enum)
+		if hi == 235 {
+			panic(fmt.Sprintf("helper %v\n", h.Helper.Enum))
+		}
+		for _, typ := range typs {
+		atomic.AddUint64(&proc.fuzzer.brfStats[hi][typ], 1)
+		}
+	}
+	atomic.AddUint64(&proc.fuzzer.brfStats[BPF_BRF_NFUNC][0], uint64(len(ps.Calls)))
+	maxFunc := atomic.LoadUint64(&proc.fuzzer.brfStats[BPF_BRF_NFUNC][1])
+	if maxFunc < uint64(len(ps.Calls)) {
+		atomic.CompareAndSwapUint64(&proc.fuzzer.brfStats[BPF_BRF_NFUNC][1], maxFunc, uint64(len(ps.Calls)))
+	}
+	for _, m := range ps.Maps {
+		//log.Logf(3, "updateBpfStats mt")
+		mi := stringToBrfStat(m.MapType)
+		if mi == 235 {
+			panic(fmt.Sprintf("map %v\n", m.MapType))
+		}
+		for _, typ := range typs {
+		atomic.AddUint64(&proc.fuzzer.brfStats[mi][typ], 1)
+		}
+	}
+	atomic.AddUint64(&proc.fuzzer.brfStats[BPF_BRF_NMAP][0], uint64(len(ps.Maps)))
+	maxMap := atomic.LoadUint64(&proc.fuzzer.brfStats[BPF_BRF_NMAP][1])
+	if maxMap < uint64(len(ps.Maps)) {
+		atomic.CompareAndSwapUint64(&proc.fuzzer.brfStats[BPF_BRF_NMAP][1], maxMap, uint64(len(ps.Maps)))
+	}
+}
+
+func (proc *Proc) updateSyzBpfStats(p *prog.Prog, info *ipc.ProgInfo) {
+	resArgType := make(map[*prog.ResultArg]uint64)
+	for _, c := range p.Calls {
+		if c.Meta.Name != "bpf$MAP_CREATE" {
+			continue
+		}
+		mapCreatePtr, ok := c.Args[1].(*prog.PointerArg)
+		if !ok || mapCreatePtr.Res == nil {
+			continue
+		}
+
+		mapCreateUnion, ok := mapCreatePtr.Res.(*prog.UnionArg)
+		if !ok {
+			continue
+		}
+
+		mv := mapCreateUnion.Option.(*prog.GroupArg).Inner[0].(*prog.ConstArg).Val
+		resArgType[c.Ret] = mv
+	}
+	for i, c := range p.Calls {
+		if c.Meta.Name == "syz_bpf_prog_run_cnt" && i == len(p.Calls)-1 {
+			nrun := uint64(info.Calls[i].Errno)
+			log.Logf(1, "bpf nrun %v", nrun)
+			if nrun == 0 {
+				atomic.AddUint64(&proc.fuzzer.brfStats[BPF_BRF_NRUN][0], 1)
+			}
+			maxNrun := atomic.LoadUint64(&proc.fuzzer.brfStats[BPF_BRF_NRUN][1])
+			if maxNrun < nrun {
+				atomic.CompareAndSwapUint64(&proc.fuzzer.brfStats[BPF_BRF_NRUN][1], maxNrun, nrun)
+			}
+			continue
+		}
+		if c.Meta.Name == "bpf$BPF_LINK_CREATE" || c.Meta.Name == "bpf$BPF_PROG_ATTACH" {
+			typ := 0
+			if info != nil && info.Calls[i].Errno == 0 {
+				typ = 2
+			} else {
+				typ = 3
+			}
+			atomic.AddUint64(&proc.fuzzer.brfStats[0][typ], 1)
+			continue
+		}
+		if c.Meta.Name == "bpf$BPF_RAW_TRACEPOINT_OPEN_UNNAMED" || c.Meta.Name == "bpf$BPF_RAW_TRACEPOINT_OPEN" {
+			typ := 0
+			if info != nil && info.Calls[i].Errno == 0 {
+				typ = 2
+			} else {
+				typ = 3
+			}
+			atomic.AddUint64(&proc.fuzzer.brfStats[BPF_PROG_TYPE_RAW_TRACEPOINT][typ], 1)
+			continue
+		}
+		if c.Meta.Name != "bpf$PROG_LOAD" && c.Meta.Name != "bpf$BPF_PROG_RAW_TRACEPOINT_LOAD" && c.Meta.Name != "bpf$BPF_PROG_WITH_BTFID_LOAD" {
+			continue
+		}
+		log.Logf(1, "bpf prog load 1")
+
+		bpfProgStructPtr, ok := c.Args[1].(*prog.PointerArg)
+		if !ok || bpfProgStructPtr.Res == nil {
+			continue
+		}
+
+		var bpfProgStruct *prog.GroupArg
+		if c.Meta.Name == "bpf$BPF_PROG_WITH_BTFID_LOAD" {
+			bpfProgWithBtfIdUnion, ok := bpfProgStructPtr.Res.(*prog.UnionArg)
+			if !ok {
+				continue
+			}
+			bpfProgStruct, ok = bpfProgWithBtfIdUnion.Option.(*prog.GroupArg)
+			if !ok {
+				continue
+			}
+		} else {
+			bpfProgStruct, _ = bpfProgStructPtr.Res.(*prog.GroupArg)
+		}
+		pv := bpfProgStruct.Inner[0].(*prog.ConstArg).Val
+		ninsn := bpfProgStruct.Inner[1].(*prog.ConstArg).Val
+		log.Logf(1, "bpf pt %v ninsn %v", pv, ninsn)
+
+		insnsPtr, ok := bpfProgStruct.Inner[2].(*prog.PointerArg)
+		if !ok || insnsPtr.Res == nil {
+			continue
+		}
+
+		log.Logf(1, "bpf prog load 2")
+		insnsUnion, ok := insnsPtr.Res.(*prog.UnionArg)
+		if !ok {
+			typ := insnsPtr.Res.(*prog.GroupArg).Type()
+			log.Logf(1, "%v %v", typ, typ.Name())
+			continue
+		}
+
+		insnsUnionIdx := insnsUnion.Index
+		log.Logf(1, "bpf insn opt %v", insnsUnionIdx)
+
+		var rawInsnsArray *[]prog.Arg
+		if insnsUnionIdx == 0 {
+			rawInsnsArray = &insnsUnion.Option.(*prog.GroupArg).Inner
+		} else if insnsUnionIdx == 1 {
+			rawInsnsArray = &insnsUnion.Option.(*prog.GroupArg).Inner[1].(*prog.GroupArg).Inner
+		}
+
+		typ := 0
+		if info != nil {
+			if info.Calls[i].Errno == 0 {
+				typ = 0
+			} else {
+				typ = 1
+			}
+		}
+
+		ninsn = uint64(len(*rawInsnsArray))
+		if typ == 0 {
+			atomic.AddUint64(&proc.fuzzer.brfStats[BPF_BRF_NINSN][0], ninsn)
+			maxNinsn := atomic.LoadUint64(&proc.fuzzer.brfStats[BPF_BRF_NINSN][1])
+			if maxNinsn < ninsn {
+				atomic.CompareAndSwapUint64(&proc.fuzzer.brfStats[BPF_BRF_NINSN][1], maxNinsn, ninsn)
+			}
+		}
+
+		var hv []uint64
+		var mv []uint64
+		for _, insn := range *rawInsnsArray {
+			log.Logf(1, "bpf insn type %v", insn.(*prog.UnionArg).Index)
+			insnFields := insn.(*prog.UnionArg).Option.(*prog.GroupArg).Inner
+			switch insn.(*prog.UnionArg).Index {
+			case 0: // generic
+				op := insnFields[0].(*prog.ConstArg).Val
+				if op == 0x18 {//ldimm map
+//					mv = insnFields[4].(*prog.ConstArg).Val
+				} else if op == 0x85 {//helper call
+					hv = append(hv, insnFields[4].(*prog.ConstArg).Val)
+				}
+//			case 1: // ldst
+//				opClass := insnFields[0].(*prog.ConstArg).Val
+//				opSize := insnFields[1].(*prog.ConstArg).Val
+//				opMode := insnFields[2].(*prog.ConstArg).Val
+//				src := insnFields[4].(*prog.ConstArg).Val
+//				if (opClass|opSize|opMode) == 0x18 && src == 1 {//BPF_PSEUDO_MAP_FD
+//					mv = insnFields[6].(*prog.ConstArg).Val
+//				}
+			case 4: // helper call
+				hv = append(hv, insnFields[3].(*prog.ConstArg).Val)
+//				log.Logf(1, "bpf insn call %v", h)
+//				log.Logf(1, "bpf insn type %v", insn.(*prog.UnionArg).Index)
+			case 9: // ldimm map
+				mv = append(mv, resArgType[insnFields[4].(*prog.ResultArg).Res])
+			}
+		}
+
+		//0 loaded 1 load fail 2 attached 3 attach fail
+
+
+//		pe, he, me := prog.Brf.ResolveEnums(int(pv), int(hv), int(mv))
+		pe := prog.Brf.ProgTypeEnumToString(int(pv))
+		pi := stringToBrfStat(pe)
+		if pi < 235 {
+			atomic.AddUint64(&proc.fuzzer.brfStats[pi][typ], 1)
+		} else {
+			log.Logf(1, "debug pv %v pi %v pe %v", pv, pi, pe)
+		}
+		for _, h := range hv {
+			he := prog.Brf.HelperEnumToString(int(pv), int(h))
+			hi := stringToBrfStat(he)
+			if hi < 235 {
+				atomic.AddUint64(&proc.fuzzer.brfStats[hi][typ], 1)
+			} else {
+				log.Logf(1, "debug hv %v hi %v he %v", h, hi, he)
+			}
+		}
+		if typ == 0 {
+			atomic.AddUint64(&proc.fuzzer.brfStats[BPF_BRF_NFUNC][0], uint64(len(hv)))
+			maxFunc := atomic.LoadUint64(&proc.fuzzer.brfStats[BPF_BRF_NFUNC][1])
+			if maxFunc < uint64(len(hv)) {
+				atomic.CompareAndSwapUint64(&proc.fuzzer.brfStats[BPF_BRF_NFUNC][1], maxFunc, uint64(len(hv)))
+			}
+		}
+		for _, m := range mv {
+			me := prog.Brf.MapTypeEnumToString(int(m))
+			mi := stringToBrfStat(me)
+			if mi < 235 {
+				atomic.AddUint64(&proc.fuzzer.brfStats[mi][typ], 1)
+			} else {
+				log.Logf(1, "debug mv %v mi %v me %v", m, mi, me)
+			}
+		}
+		if typ == 0 {
+			atomic.AddUint64(&proc.fuzzer.brfStats[BPF_BRF_NMAP][0], uint64(len(mv)))
+			maxMap := atomic.LoadUint64(&proc.fuzzer.brfStats[BPF_BRF_NMAP][1])
+			if maxMap < uint64(len(mv)) {
+				atomic.CompareAndSwapUint64(&proc.fuzzer.brfStats[BPF_BRF_NMAP][1], maxMap, uint64(len(mv)))
+			}
+		}
+	}
+}
+
+func (proc *Proc) updateBpfStats(p *prog.Prog, info *ipc.ProgInfo) {
+	if prog.Brf.IsEnabled() {
+		proc.updateBrfBpfStats(p, info)
+	} else {
+		proc.updateSyzBpfStats(p, info)
+	}
+}
+
 func (proc *Proc) loop() {
-	generatePeriod := 100
+	test := false
+	if test {
+		for i := 0; ; i++ {
+			ct := proc.fuzzer.choiceTable
+			p := proc.fuzzer.target.Generate(proc.rnd, prog.RecommendedCalls, ct)
+			log.Logf(1, "#%v: generated", proc.pid)
+			proc.executeAndCollide(proc.execOpts, p, ProgNormal, StatGenerate)
+		}
+	}
+
+	generatePeriod := 10//100
 	if proc.fuzzer.config.Flags&ipc.FlagSignal == 0 {
 		// If we don't have real coverage signal, generate programs more frequently
 		// because fallback signal is weak.
@@ -89,6 +391,7 @@ func (proc *Proc) loop() {
 			p := proc.fuzzer.target.Generate(proc.rnd, prog.RecommendedCalls, ct)
 			log.Logf(1, "#%v: generated", proc.pid)
 			proc.executeAndCollide(proc.execOpts, p, ProgNormal, StatGenerate)
+
 		} else {
 			// Mutate an existing prog.
 			p := fuzzerSnapshot.chooseProgram(proc.rnd).Clone()
@@ -331,6 +634,7 @@ func (proc *Proc) executeRaw(opts *ipc.ExecOpts, p *prog.Prog, stat Stat) *ipc.P
 			time.Sleep(time.Second)
 			continue
 		}
+		proc.updateBpfStats(p, info)
 		log.Logf(2, "result hanged=%v: %s", hanged, output)
 		return info
 	}

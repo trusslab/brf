@@ -182,21 +182,6 @@ var typePtr = &typeDesc{
 	},
 }
 
-var typeBpfProg = &typeDesc{
-	Names:        []string{"bpf_insns"},
-	CanBeTypedef: true,
-	Varlen: func(comp *compiler, t *ast.Type, args []*ast.Type) bool {
-		return true
-	},
-	Gen: func(comp *compiler, t *ast.Type, args []*ast.Type, base prog.IntTypeCommon) prog.Type {
-		//base.TypeSize = 0
-		//base.TypeAlign = getIntAlignment(comp, base)
-		return &prog.BpfProgType{
-			TypeCommon: base.TypeCommon,
-		}
-	},
-}
-
 var typeVoid = &typeDesc{
 	Names:     []string{"void"},
 	CantBeOpt: true,
@@ -1128,7 +1113,6 @@ func init() {
 		typeText,
 		typeString,
 		typeFmt,
-		typeBpfProg,
 	}
 	for _, desc := range builtins {
 		for _, name := range desc.Names {

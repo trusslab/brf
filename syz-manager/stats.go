@@ -4,6 +4,7 @@
 package main
 
 import (
+//	"fmt"
 	"sync"
 	"sync/atomic"
 
@@ -35,6 +36,7 @@ type Stats struct {
 
 	mu         sync.Mutex
 	namedStats map[string]uint64
+	brfStats   map[string]uint64
 	haveHub    bool
 }
 
@@ -91,18 +93,76 @@ func (stats *Stats) all() map[string]uint64 {
 	return m
 }
 
+func (stats *Stats) brf() (map[string]*[4]uint64, map[string]*[4]uint64, map[string]*[4]uint64, map[string]*[4]uint64) {
+	generals := make(map[string]*[4]uint64)
+	progs := make(map[string]*[4]uint64)
+	helpers := make(map[string]*[4]uint64)
+	maps := make(map[string]*[4]uint64)
+	for k, v := range stats.brfStats {
+		key := k[0:len(k)-2]
+
+		typ := 0
+		i := k[len(k)-1:]
+		if i == "0" {
+			typ = 0
+		} else if i == "1" {
+			typ = 1
+		} else if i == "2" {
+			typ = 2
+		} else if i == "3" {
+			typ = 3
+		}
+
+		if k[0:7] == "BPF_BRF" {
+			if _, ok := generals[key]; !ok {
+				generals[key] = new([4]uint64)
+			}
+			(*generals[key])[typ] = v
+		} else if k[0:8] == "BPF_PROG" {
+			if _, ok := progs[key]; !ok {
+				progs[key] = new([4]uint64)
+			}
+			(*progs[key])[typ] = v
+		} else if k[0:8] == "BPF_FUNC" {
+			if _, ok := helpers[key]; !ok {
+				helpers[key] = new([4]uint64)
+			}
+			(*helpers[key])[typ] = v
+		} else if k[0:7] == "BPF_MAP" {
+			if _, ok := maps[key]; !ok {
+				maps[key] = new([4]uint64)
+			}
+			(*maps[key])[typ] = v
+		}
+	}
+	return generals, progs, helpers, maps
+}
+
 func (stats *Stats) mergeNamed(named map[string]uint64) {
 	stats.mu.Lock()
 	defer stats.mu.Unlock()
 	if stats.namedStats == nil {
 		stats.namedStats = make(map[string]uint64)
 	}
+	if stats.brfStats == nil {
+		stats.brfStats = make(map[string]uint64)
+	}
 	for k, v := range named {
 		switch k {
 		case "exec total":
 			stats.execTotal.add(int(v))
 		default:
-			stats.namedStats[k] += v
+			if k[0:3] == "BPF" {
+				if k[0:7] == "BPF_BRF" && k[len(k)-1:] == "1" {
+					if stats.brfStats[k] < v {
+						stats.brfStats[k] = v
+					}
+				} else {
+					stats.brfStats[k] += v
+				}
+			} else {
+				stats.namedStats[k] += v
+			}
 		}
 	}
 }

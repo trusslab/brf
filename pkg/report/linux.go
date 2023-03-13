@@ -2227,4 +2227,16 @@ var linuxOopses = append([]*oops{
 		},
 		[]*regexp.Regexp{},
 	},
+	{
+		[]byte("verbose_"),
+		[]oopsFormat{
+			{
+				title:  compile("verbose_"),
+				report: compile("verbose_([0-9]+): (.*)"),
+				fmt:    "verbose_%[1]v",
+				noStackTrace: true,
+			},
+		},
+		[]*regexp.Regexp{},
+	},
 }, commonOopses...)

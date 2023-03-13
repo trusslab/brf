@@ -551,29 +551,29 @@ func (t *BufferType) isDefaultArg(arg Arg) bool {
 	}
 	return true
 }
-
-type BpfProgType struct {
-	TypeCommon
-	Values     []string
-}
-
-func (t *BpfProgType) String() string {
-	return "bpf_prog"
-}
-
-func (t *BpfProgType) DefaultArg(dir Dir) Arg {
-	var data []byte
-	if len(t.Values) == 1 {
-		data = []byte(t.Values[0])
-	} else if !t.Varlen() {
-		data = make([]byte, t.Size())
-	}
-	return MakeDataArg(t, dir, data)
-}
-
-func (t *BpfProgType) isDefaultArg(arg Arg) bool {
-	return true
-}
+//
+//type BpfProgType struct {
+//	TypeCommon
+//	Values []string
+//}
+//
+//func (t *BpfProgType) String() string {
+//	return "bpf_prog"
+//}
+//
+//func (t *BpfProgType) DefaultArg(dir Dir) Arg {
+//	var data []byte
+//	if len(t.Values) == 1 {
+//		data = []byte(t.Values[0])
+//	} else if !t.Varlen() {
+//		data = make([]byte, t.Size())
+//	}
+//	return MakeDataArg(t, dir, data)
+//}
+//
+//func (t *BpfProgType) isDefaultArg(arg Arg) bool {
+//	return true
+//}
 
 type ArrayKind int
 
@@ -754,7 +754,8 @@ func foreachTypeImpl(meta *Syscall, preorder bool, f func(t Type, ctx *TypeCtx))
 				rec(&a.Fields[i].Type, f.Dir(dir))
 			}
 		case *ResourceType, *BufferType, *VmaType, *LenType, *FlagsType,
-			*ConstType, *IntType, *ProcType, *CsumType, *BpfProgType:
+			*ConstType, *IntType, *ProcType, *CsumType:
+//			*ConstType, *IntType, *ProcType, *CsumType, *BpfProgType:
 		case Ref:
 			// This is only needed for pkg/compiler.
 		default:

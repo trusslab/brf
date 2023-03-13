@@ -214,8 +214,14 @@ func RunManager(cfg *mgrconfig.Config) {
 			numReproducing := atomic.LoadUint32(&mgr.numReproducing)
 			numFuzzing := atomic.LoadUint32(&mgr.numFuzzing)
 
-			log.Logf(0, "VMs %v, executed %v, cover %v, signal %v/%v, crashes %v, repro %v",
-				numFuzzing, executed, corpusCover, corpusSignal, maxSignal, crashes, numReproducing)
+			if mgr.serv.coverFilter != nil {
+				corpusCoverFiltered := mgr.stats.corpusCoverFiltered.get()
+				log.Logf(0, "VMs %v, executed %v, filtered %v, cover %v, signal %v/%v, crashes %v, repro %v",
+					numFuzzing, executed, corpusCoverFiltered, corpusCover, corpusSignal, maxSignal, crashes, numReproducing)
+			} else {
+				log.Logf(0, "VMs %v, executed %v, cover %v, signal %v/%v, crashes %v, repro %v",
+					numFuzzing, executed, corpusCover, corpusSignal, maxSignal, crashes, numReproducing)
+			}
 		}
 	}()
 

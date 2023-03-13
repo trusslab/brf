@@ -36,6 +36,7 @@ func (mgr *Manager) initHTTP() {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/", mgr.httpSummary)
+	mux.HandleFunc("/brf", mgr.httpBpfRuntimeFuzzer)
 	mux.HandleFunc("/config", mgr.httpConfig)
 	mux.HandleFunc("/metrics", promhttp.HandlerFor(prometheus.DefaultGatherer, promhttp.HandlerOpts{}).ServeHTTP)
 	mux.HandleFunc("/syscalls", mgr.httpSyscalls)
@@ -79,6 +80,11 @@ func (mgr *Manager) httpSummary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	executeTemplate(w, summaryTemplate, data)
+}
+
+func (mgr *Manager) httpBpfRuntimeFuzzer(w http.ResponseWriter, r *http.Request) {
+	data := mgr.collectBrfStats()
+	executeTemplate(w, brfTemplate, &data)
 }
 
 func (mgr *Manager) httpConfig(w http.ResponseWriter, r *http.Request) {
@@ -162,6 +168,29 @@ func (mgr *Manager) collectStats() []UIStat {
 		return intStats[i].Name < intStats[j].Name
 	})
 	stats = append(stats, intStats...)
+	return stats
+}
+
+func (mgr *Manager) collectBrfStats() UIBrfSummaryData {
+	mgr.mu.Lock()
+	defer mgr.mu.Unlock()
+
+	generals, progs, helpers, maps := mgr.stats.brf()
+	var stats UIBrfSummaryData
+	stats.Name = mgr.cfg.Name
+	for k, v := range generals {
+		stats.General = append(stats.General, UIBrfGeneralStat{k, *v})
+	}
+	for k, v := range progs {
+		stats.Progs = append(stats.Progs, UIBrfProgStat{k, *v})
+	}
+	for k, v := range helpers {
+		stats.Helpers = append(stats.Helpers, UIBrfHelperStat{k, *v})
+	}
+	for k, v := range maps {
+		stats.Maps = append(stats.Maps, UIBrfMapStat{k, *v})
+	}
+
 	return stats
 }
 
@@ -693,6 +722,34 @@ type UIInput struct {
 	Cover int
 }
 
+type UIBrfSummaryData struct {
+	Name    string
+	General []UIBrfGeneralStat
+	Progs   []UIBrfProgStat
+	Helpers []UIBrfHelperStat
+	Maps    []UIBrfMapStat
+}
+
+type UIBrfGeneralStat struct {
+	Name  string
+	Count [4]uint64
+}
+
+type UIBrfMapStat struct {
+	Name  string
+	Count [4]uint64
+}
+
+type UIBrfProgStat struct {
+	Name  string
+	Count [4]uint64
+}
+
+type UIBrfHelperStat struct {
+	Name  string
+	Count [4]uint64
+}
+
 var summaryTemplate = html.CreatePage(`
 <!doctype html>
 <html>
@@ -751,6 +808,97 @@ var summaryTemplate = html.CreatePage(`
 	var textarea = document.getElementById("log_textarea");
 	textarea.scrollTop = textarea.scrollHeight;
 </script>
+</body></html>
+`)
+
+		//<td class="stat_value">{{$s.Count}}</td>
+var brfTemplate = html.CreatePage(`
+<!doctype html>
+<html>
+<head>
+	<title>{{.Name }} syzkaller</title>
+	{{HEAD}}
+</head>
+<body>
+<b>{{.Name }} syzkaller</b>
+<br>
+
+<table class="list_table">
+	<caption>General:</caption>
+	<tr>
+		<th>Stat</th>
+		<th>Total</th>
+		<th>Max</th>
+		<th>na</th>
+		<th>na</th>
+	</tr>
+	{{range $s := $.General}}
+	<tr>
+		<td class="stat_name">{{$s.Name}}</td>
+		{{range $c := $s.Count}}
+			<td class="stat_value">{{$c}}</td>
+		{{end}}
+	</tr>
+	{{end}}
+</table>
+
+<table class="list_table">
+	<caption>Program Types:</caption>
+	<tr>
+		<th>Name</th>
+		<th>Load success</th>
+		<th>Load fail</th>
+		<th>Attach success</th>
+		<th>Attach fail</th>
+	</tr>
+	{{range $s := $.Progs}}
+	<tr>
+		<td class="stat_name">{{$s.Name}}</td>
+		{{range $c := $s.Count}}
+			<td class="stat_value">{{$c}}</td>
+		{{end}}
+	</tr>
+	{{end}}
+</table>
+
+<table class="list_table">
+	<caption>Helper Types:</caption>
+	<tr>
+		<th>Name</th>
+		<th>Load success</th>
+		<th>Load fail</th>
+		<th>Attach success</th>
+		<th>Attach fail</th>
+	</tr>
+	{{range $s := $.Helpers}}
+	<tr>
+		<td class="stat_name">{{$s.Name}}</td>
+		{{range $c := $s.Count}}
+			<td class="stat_value">{{$c}}</td>
+		{{end}}
+	</tr>
+	{{end}}
+</table>
+
+<table class="list_table">
+	<caption>Map Types:</caption>
+	<tr>
+		<th>Name</th>
+		<th>Load success</th>
+		<th>Load fail</th>
+		<th>Attach success</th>
+		<th>Attach fail</th>
+	</tr>
+	{{range $s := $.Maps}}
+	<tr>
+		<td class="stat_name">{{$s.Name}}</td>
+		{{range $c := $s.Count}}
+			<td class="stat_value">{{$c}}</td>
+		{{end}}
+	</tr>
+	{{end}}
+</table>
+
 </body></html>
 `)
 

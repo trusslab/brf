@@ -95,7 +95,7 @@ func newModule(code string, cflags []string) *Module {
 	}
 	cs := C.CString(code)
 	defer C.free(unsafe.Pointer(cs))
-	c := C.bpf_module_create_c_from_string(cs, 2, (**C.char)(&cflagsC[0]), C.int(len(cflagsC)), (C.bool)(true), nil)
+	c := C.bpf_module_create_c_from_string(cs, 63, (**C.char)(&cflagsC[0]), C.int(len(cflagsC)), (C.bool)(true), nil)
 	if c == nil {
 		return nil
 	}
@@ -227,28 +227,28 @@ func (bpf *Module) GetInsns(name string) ([]byte, error) {
 }
 
 type BtfInfo struct {
-	prog_btf_fd        int
-	func_info          []byte
-	func_info_cnt      int
-	func_info_rec_size int
-	line_info          []byte
-	line_info_cnt      int
-	line_info_rec_size int
+	Prog_btf_fd        int
+	Func_info          []byte
+	Func_info_cnt      int
+	Func_info_rec_size int
+	Line_info          []byte
+	Line_info_cnt      int
+	Line_info_rec_size int
 }
 
 func (bpf *Module) GetBtfInfo(name string) (BtfInfo, error) {
 	var b BtfInfo
 	nameCS := C.CString(name)
-	fd := unsafe.Pointer(&b.prog_btf_fd)
-	fi := unsafe.Pointer(&b.func_info)
-	fic := unsafe.Pointer(&b.func_info_cnt)
-	fisz := unsafe.Pointer(&b.func_info_rec_size)
-	li := unsafe.Pointer(&b.func_info)
-	lic := unsafe.Pointer(&b.func_info_cnt)
-	lisz := unsafe.Pointer(&b.func_info_rec_size)
+	fd := unsafe.Pointer(&b.Prog_btf_fd)
+	fi := unsafe.Pointer(&b.Func_info)
+	fic := unsafe.Pointer(&b.Func_info_cnt)
+	fisz := unsafe.Pointer(&b.Func_info_rec_size)
+	li := unsafe.Pointer(&b.Line_info)
+	lic := unsafe.Pointer(&b.Line_info_cnt)
+	lisz := unsafe.Pointer(&b.Line_info_rec_size)
 	defer C.free(unsafe.Pointer(nameCS))
 	ret := C.bool(C.bpf_get_btf_info(bpf.p, nameCS, fd, fi, fic, fisz, li, lic, lisz))
-	if ret != false  {
+	if ret != false {
 		return BtfInfo{}, fmt.Errorf("Module: unable to find %s", name)
 	}
 

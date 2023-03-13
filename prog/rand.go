@@ -553,6 +553,121 @@ func (r *randGen) generateParticularCall(s *state, meta *Syscall) (calls []*Call
 	return append(calls, c)
 }
 
+func (r *randGen) generateBpfProgOpenCall(s *state, ps *BpfProgState) *Call {
+	meta := r.target.SyscallMap["syz_bpf_prog_open"]
+	args := make([]Arg, len(meta.Args))
+	c := MakeCall(meta, nil)
+
+	pathStr := []byte(ps.Path)
+	pathArg := meta.Args[0]
+	pathPtr := pathArg.Type.(*PtrType)
+	pathBuffer := pathPtr.Elem.(*BufferType)
+	pathBufferDir := pathPtr.ElemDir
+	pathBufferArg := MakeDataArg(pathBuffer, pathBufferDir, pathStr)
+	args[0] = r.allocAddr(s, pathArg.Type, pathArg.Dir(DirIn), pathBufferArg.Size(), pathBufferArg)
+
+	c.Args = args
+	r.target.assignSizesCall(c)
+	return c
+}
+
+func (r *randGen) generateBpfProgLoadCall(s *state, ps *BpfProgState) *Call {
+	meta := r.target.SyscallMap["syz_bpf_prog_load"]
+	args := make([]Arg, len(meta.Args))
+	c := MakeCall(meta, nil)
+
+	/* BPF prog path */
+	pathStr := []byte(ps.Path)
+	pathArg := meta.Args[0]
+	pathPtr := pathArg.Type.(*PtrType)
+	pathBuffer := pathPtr.Elem.(*BufferType)
+	pathBufferDir := pathPtr.ElemDir
+	pathBufferArg := MakeDataArg(pathBuffer, pathBufferDir, pathStr)
+	args[0] = r.allocAddr(s, pathArg.Type, pathArg.Dir(DirIn), pathBufferArg.Size(), pathBufferArg)
+
+	/* Resources */
+	args[1], _ = r.generateArg(s, meta.Args[1].Type, meta.Args[1].Dir(DirIn))
+
+	c.Args = args
+	r.target.assignSizesCall(c)
+	return c
+}
+
+func (r *randGen) generateBpfProgAttachCall(s *state, ps *BpfProgState, ra *ResultArg) *Call {
+	meta := r.target.SyscallMap["syz_bpf_prog_attach"]
+	args := make([]Arg, len(meta.Args))
+	c := MakeCall(meta, nil)
+
+	pathStr := []byte(ps.Path)
+	pathArg := meta.Args[0]
+	pathPtr := pathArg.Type.(*PtrType)
+	pathBuffer := pathPtr.Elem.(*BufferType)
+	pathBufferDir := pathPtr.ElemDir
+	pathBufferArg := MakeDataArg(pathBuffer, pathBufferDir, pathStr)
+	args[0] = r.allocAddr(s, pathArg.Type, pathArg.Dir(DirIn), pathBufferArg.Size(), pathBufferArg)
+
+	resArg := meta.Args[1]
+	resType := resArg.Type.(*ResourceType)
+	args[1] = MakeResultArg(resType, resArg.Dir(DirIn), ra, 0)
+
+	c.Args = args
+	r.target.assignSizesCall(c)
+	return c
+}
+
+func (r *randGen) generateBpfProgTestRunCall(s *state, ps *BpfProgState, ra *ResultArg) *Call {
+	meta := r.target.SyscallMap["bpf$BPF_PROG_TEST_RUN"]
+	args := make([]Arg, len(meta.Args))
+	c := MakeCall(meta, nil)
+
+	cmdArg := meta.Args[0]
+	args[0], _ = r.generateArg(s, cmdArg.Type, cmdArg.Dir(DirIn))
+
+	testProgArg := meta.Args[1]
+	testProgPtr := testProgArg.Type.(*PtrType)
+	testProgStruct := testProgPtr.Elem.(*StructType)
+	testProgStructDir := testProgPtr.ElemDir
+
+	testProgStructFields := make([]Arg, len(testProgStruct.Fields))
+	for i, field := range testProgStruct.Fields {
+		if i == 0 {
+			resArg := field
+			resType := resArg.Type.(*ResourceType)
+			testProgStructFields[i] = MakeResultArg(resType, resArg.Dir(DirIn), ra, 0)
+		} else {
+			testProgStructFields[i], _ = r.generateArg(s, field.Type, field.Dir(DirIn))
+		}
+	}
+
+	testProgStructArg := MakeGroupArg(testProgStruct, testProgStructDir, testProgStructFields)
+	args[1] = r.allocAddr(s, testProgArg.Type, testProgArg.Dir(DirIn), testProgStructArg.Size(), testProgStructArg)
+
+	lenArg := meta.Args[2]
+	args[2], _ = r.generateArg(s, lenArg.Type, lenArg.Dir(DirIn))
+
+	c.Args = args
+	r.target.assignSizesCall(c)
+	return c
+}
+
+func (r *randGen) generateBpfProgRunCntCall(s *state, ra *ResultArg) *Call {
+	meta := r.target.SyscallMap["syz_bpf_prog_run_cnt"]
+	args := make([]Arg, len(meta.Args))
+	c := MakeCall(meta, nil)
+
+	resArg := meta.Args[0]
+	resType := resArg.Type.(*ResourceType)
+	if ra == nil {
+		args[0], _ = r.generateArg(s, resArg.Type, resArg.Dir(DirIn))
+	} else {
+		args[0] = MakeResultArg(resType, resArg.Dir(DirIn), ra, 0)
+	}
+
+	c.Args = args
+	r.target.assignSizesCall(c)
+	return c
+}
+
 // GenerateAllSyzProg generates a program that contains all pseudo syz_ calls for testing.
 func (target *Target) GenerateAllSyzProg(rs rand.Source) *Prog {
 	p := &Prog{
@@ -737,17 +852,6 @@ func (a *BufferType) generate(r *randGen, s *state, dir Dir) (arg Arg, calls []*
 	default:
 		panic("unknown buffer kind")
 	}
-}
-
-func (a *BpfProgType) generate(r *randGen, s *state, dir Dir) (arg Arg, calls []*Call) {
-	data := bpfRuntimeFuzzer.GenBpfInsns(r)
-//	var data []byte
-//	if len(a.Values) == 1 {
-//		data = []byte(a.Values[0])
-//	} else if !a.Varlen() {
-//		data = make([]byte, a.Size())
-//	}
-	return MakeDataArg(a, dir, data), nil
 }
 
 func (a *VmaType) generate(r *randGen, s *state, dir Dir) (arg Arg, calls []*Call) {

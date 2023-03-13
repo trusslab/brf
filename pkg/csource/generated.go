@@ -10240,6 +10240,88 @@ static long syz_clone3(volatile long a0, volatile long a1)
 
 #endif
 
+#if SYZ_EXECUTOR || __NR_syz_bpf_prog_load
+#include <bpf/libbpf.h>
+
+#define MAX_ERRNO 4095
+
+#define IS_ERR_VALUE(x) ((x) >= (unsigned long)-MAX_ERRNO)
+
+static inline void* ERR_PTR(long error_)
+{
+	return (void*)error_;
+}
+
+static inline long PTR_ERR(const void* ptr)
+{
+	return (long)ptr;
+}
+
+static inline bool IS_ERR(const void* ptr)
+{
+	return IS_ERR_VALUE((unsigned long)ptr);
+}
+
+struct bpf_res {
+	int prog_fds[256];
+	int prog_num;
+	int map_fds[256];
+	int map_num;
+	int btf_fds[256];
+	int btf_num;
+};
+
+int bpf_prog_fds[256];
+int bpf_map_fds[256];
+int bpf_btf_fds[256];
+struct bpf_res res;
+
+static void syz_bpf_prog_load(volatile long a0, volatile long a1)
+{
+	int ret = 0;
+	const char* file = (char*)a0;
+	struct bpf_object* bo = bpf_object__open(file);
+	if (IS_ERR(bo)) {
+		fprintf(stderr, "syz_bpf_prog_load: failed to open bpf prog, errno %ld\n", PTR_ERR(bo));
+		return;
+	}
+
+	ret = bpf_object__load(bo);
+	if (ret) {
+		fprintf(stderr, "syz_bpf_prog_load: failed to load bpf prog, errno %d\n", ret);
+		return;
+	}
+
+	struct bpf_res* res = (struct bpf_res*)a1;
+
+	int i = 0;
+	res.prog_fds = bpf_prog_fds;
+	struct bpf_program* prog;
+	bpf_object__for_each_program(prog, bo)
+	{
+		res.prog_fds[i++] = bpf_program__fd(prog);
+		fprintf(stderr, "bpf_prod_fds[%d]=%d\n", i - 1, res.prog_fds[i - 1]);
+	}
+	res.prog_num = i;
+
+	i = 0;
+	res.map_fds = bpf_map_fds;
+	struct bpf_map* map;
+	bpf_object__for_each_map(map, bo)
+	{
+		res.map_fds[i++] = bpf_map__fd(map);
+		fprintf(stderr, "bpf_map_fds[%d]=%d\n", i - 1, res.map_fds[i - 1]);
+	}
+	res.map_num = i;
+
+	res.btf_num = 1;
+	res.btf_fds = bpf_btf_fds;
+	res.btf_fds[0] = bpf_object__btf_fd(bo);
+	fprintf(stderr, "bpf_btf_fds[0]=%d\n", res.btf_fds[0]);
+}
+
+#endif
+
 #elif GOOS_test
 
 #include <stdlib.h>

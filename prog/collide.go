@@ -43,8 +43,13 @@ func AssignRandomAsync(origProg *Prog, rand *rand.Rand) *Prog {
 				consumes[res.Res] = true
 			}
 		})
+		serialCall := false
+		if Brf.isEnabled && i < 3 {
+			serialCall = true
+		}
 		// Make async with a 66% chance (but never the last call).
-		if !producesUnassigned && i+1 != len(prog.Calls) && rand.Intn(3) != 0 {
+//		if !producesUnassigned && i+1 != len(prog.Calls) && rand.Intn(3) != 0 {
+		if !producesUnassigned && i+1 != len(prog.Calls) && rand.Intn(3) != 0 && !serialCall {
 			call.Props.Async = true
 			for res := range consumes {
 				unassigned[res] = true

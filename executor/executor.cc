@@ -72,7 +72,7 @@ const int kOutPipeFd = kMaxFd - 2; // remapped from stdout
 const int kCoverFd = kOutPipeFd - kMaxThreads;
 const int kExtraCoverFd = kCoverFd - 1;
 const int kMaxArgs = 9;
-const int kCoverSize = 256 << 10;
+const int kCoverSize = 256 << 14;//10;
 const int kFailStatus = 67;
 
 // Two approaches of dealing with kcov memory.
@@ -1293,8 +1293,8 @@ void execute_call(thread_t* th)
 	debug("\n");
 
 	if (strcmp("bpf$PROG_LOAD1", call->name) == 0) {
-		FILE *fp = fopen("/var/log/messages", "r");
-		char *line;
+		FILE* fp = fopen("/var/log/messages", "r");
+		char* line;
 		size_t size = 0;
 		do {
 			ssize_t line_size = getline(&line, &size, fp);
