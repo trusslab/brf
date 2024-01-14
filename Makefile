@@ -141,7 +141,7 @@ ifneq ("$(NO_CROSS_COMPILER)", "")
 else
 	mkdir -p ./bin/$(TARGETOS)_$(TARGETARCH)
 	$(CC) -o ./bin/$(TARGETOS)_$(TARGETARCH)/syz-executor$(EXE) executor/executor.cc \
-		$(ADDCFLAGS) $(CFLAGS) -DGOOS_$(TARGETOS)=1 -DGOARCH_$(TARGETARCH)=1 \
+		$(ADDCFLAGS) $(CFLAGS) -L/usr/local/lib64 -lbpf -lelf -lz -DGOOS_$(TARGETOS)=1 -DGOARCH_$(TARGETARCH)=1 \
 		-DHOSTGOOS_$(HOSTOS)=1 -DGIT_REVISION=\"$(REV)\"
 endif
 endif

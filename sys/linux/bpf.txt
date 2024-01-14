@@ -92,6 +92,8 @@ type bpf_prog_xdp bpf_prog_t[const[BPF_PROG_TYPE_XDP, int32], const[BPF_XDP, int
 type bpf_link_create_xdp bpf_link_create_arg_t[fd_bpf_prog_xdp, ifindex, const[BPF_XDP, int32], flags[xdp_flags, int32]]
 xdp_flags = XDP_FLAGS_UPDATE_IF_NOEXIST, XDP_FLAGS_SKB_MODE, XDP_FLAGS_DRV_MODE, XDP_FLAGS_HW_MODE, XDP_FLAGS_REPLACE
 
+syz_bpf_prog_open(path ptr[in, filename])
+
 bpf_map_const_str_freeze {
 	in	fd_bpf_const_str
 	out	bpf_frozen_const_str	(out_overlay)
