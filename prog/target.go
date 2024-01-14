@@ -75,6 +75,8 @@ type Target struct {
 	// The default ChoiceTable is used only by tests and utilities, so we initialize it lazily.
 	defaultOnce        sync.Once
 	defaultChoiceTable *ChoiceTable
+
+	Brf *BpfRuntimeFuzzer
 }
 
 const maxSpecialPointers = 16
@@ -150,6 +152,17 @@ func (target *Target) lazyInit() {
 	// These are used only during lazyInit.
 	target.ConstMap = nil
 	target.types = nil
+
+	target.initBrf()
+}
+
+func (target *Target) initBrf() {
+	enable := false
+	if _, ok := target.SyscallMap["syz_bpf_prog_open"]; ok {
+		enable = true
+	}
+
+	target.Brf = NewBpfRuntimeFuzzer(enable)
 }
 
 func (target *Target) initTarget() {
