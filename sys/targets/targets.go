@@ -491,6 +491,7 @@ var oses = map[string]osCommon{
 			"syz_clone3":          {"clone3", "exit"},
 			"syz_clone":           {"clone", "exit"},
 			"syz_pidfd_open":      {"pidfd_open"},
+			"syz_bpf_prog_open":   {"bpf$PROG_LOAD"},
 		},
 		cflags: []string{"-static-pie"},
 	},
