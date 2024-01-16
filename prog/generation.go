@@ -15,6 +15,7 @@ func (target *Target) Generate(rs rand.Source, ncalls int, ct *ChoiceTable) *Pro
 	}
 	r := newRand(target, rs)
 	s := newState(target, ct, nil)
+	target.Brf.GenPrologue(r, s, p)
 	for len(p.Calls) < ncalls {
 		calls := r.generateCall(s, p, len(p.Calls))
 		for _, c := range calls {
