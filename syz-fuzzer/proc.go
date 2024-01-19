@@ -60,42 +60,42 @@ func newProc(fuzzer *Fuzzer, pid int) (*Proc, error) {
 }
 
 func (proc *Proc) loop() {
-	generatePeriod := 100
-	if proc.fuzzer.config.Flags&ipc.FlagSignal == 0 {
-		// If we don't have real coverage signal, generate programs more frequently
-		// because fallback signal is weak.
-		generatePeriod = 2
-	}
+//	generatePeriod := 1
+//	if proc.fuzzer.config.Flags&ipc.FlagSignal == 0 {
+//		// If we don't have real coverage signal, generate programs more frequently
+//		// because fallback signal is weak.
+//		generatePeriod = 2
+//	}
 	for i := 0; ; i++ {
-		item := proc.fuzzer.workQueue.dequeue()
-		if item != nil {
-			switch item := item.(type) {
-			case *WorkTriage:
-				proc.triageInput(item)
-			case *WorkCandidate:
-				proc.execute(proc.execOpts, item.p, item.flags, StatCandidate)
-			case *WorkSmash:
-				proc.smashInput(item)
-			default:
-				log.SyzFatalf("unknown work type: %#v", item)
-			}
-			continue
-		}
+//		item := proc.fuzzer.workQueue.dequeue()
+//		if item != nil {
+//			switch item := item.(type) {
+//			case *WorkTriage:
+//				proc.triageInput(item)
+//			case *WorkCandidate:
+//				proc.execute(proc.execOpts, item.p, item.flags, StatCandidate)
+//			case *WorkSmash:
+//				proc.smashInput(item)
+//			default:
+//				log.SyzFatalf("unknown work type: %#v", item)
+//			}
+//			continue
+//		}
 
 		ct := proc.fuzzer.choiceTable
-		fuzzerSnapshot := proc.fuzzer.snapshot()
-		if len(fuzzerSnapshot.corpus) == 0 || i%generatePeriod == 0 {
+//		fuzzerSnapshot := proc.fuzzer.snapshot()
+//		if len(fuzzerSnapshot.corpus) == 0 || i%generatePeriod == 0 {
 			// Generate a new prog.
 			p := proc.fuzzer.target.Generate(proc.rnd, prog.RecommendedCalls, ct)
 			log.Logf(1, "#%v: generated", proc.pid)
 			proc.executeAndCollide(proc.execOpts, p, ProgNormal, StatGenerate)
-		} else {
-			// Mutate an existing prog.
-			p := fuzzerSnapshot.chooseProgram(proc.rnd).Clone()
-			p.Mutate(proc.rnd, prog.RecommendedCalls, ct, proc.fuzzer.noMutate, fuzzerSnapshot.corpus)
-			log.Logf(1, "#%v: mutated", proc.pid)
-			proc.executeAndCollide(proc.execOpts, p, ProgNormal, StatFuzz)
-		}
+//		} else {
+//			// Mutate an existing prog.
+//			p := fuzzerSnapshot.chooseProgram(proc.rnd).Clone()
+//			p.Mutate(proc.rnd, prog.RecommendedCalls, ct, proc.fuzzer.noMutate, fuzzerSnapshot.corpus)
+//			log.Logf(1, "#%v: mutated", proc.pid)
+//			proc.executeAndCollide(proc.execOpts, p, ProgNormal, StatFuzz)
+//		}
 	}
 }
 
