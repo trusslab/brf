@@ -1,44 +1,138 @@
-# syzkaller - kernel fuzzer
+# BPF Runtime Fuzzer (BRF)
+BRF is a coverage-guided fuzzer that aims to fuzz the runtime compononets of eBPF shielded by the verifier. BRF uses semantic-aware and dependency-aware input generation/mutation logic as well as generating syscalls to trigger the execution of eBPF programs to achieve the goal. The implementation of BRF is based on Syzkaller.
 
-[![CI Status](https://github.com/google/syzkaller/workflows/ci/badge.svg)](https://github.com/google/syzkaller/actions?query=workflow/ci)
-[![OSS-Fuzz](https://oss-fuzz-build-logs.storage.googleapis.com/badges/syzkaller.svg)](https://bugs.chromium.org/p/oss-fuzz/issues/list?q=label:Proj-syzkaller)
-[![Go Report Card](https://goreportcard.com/badge/github.com/google/syzkaller)](https://goreportcard.com/report/github.com/google/syzkaller)
-[![Coverage Status](https://codecov.io/gh/google/syzkaller/graph/badge.svg)](https://codecov.io/gh/google/syzkaller)
-[![GoDoc](https://godoc.org/github.com/google/syzkaller?status.svg)](https://godoc.org/github.com/google/syzkaller)
-[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+## Prerequisites
 
-`syzkaller` (`[siːzˈkɔːlə]`) is an unsupervised coverage-guided kernel fuzzer.\
-Supported OSes: `Akaros`, `FreeBSD`, `Fuchsia`, `gVisor`, `Linux`, `NetBSD`, `OpenBSD`, `Windows`.
+### LLVM
+To use latest bpf features, it is better to build the kernel using the latest llvm.
 
-Mailing list: [syzkaller@googlegroups.com](https://groups.google.com/forum/#!forum/syzkaller) (join on [web](https://groups.google.com/forum/#!forum/syzkaller) or by [email](mailto:syzkaller+subscribe@googlegroups.com)).
+``` bash
+git clone --branch llvmorg-17.0.6 https://github.com/llvm/llvm-project.git
+mkdir llvm-project/build; cd llvm-project/build
+cmake ../llvm -DLLVM_TARGETS_TO_BUILD="BPF;X86" \
+	-DLLVM_ENABLE_PROJECTS=clang \
+	-DBUILD_SHARED_LIBS=OFF \
+	-DCMAKE_BUILD_TYPE=Release \
+	-DLLVM_BUILD_RUNTIME=OFF
+make
+```
+After the build completes, export build/bin to $PATH.
 
-Found bugs: [Akaros](docs/akaros/found_bugs.md), [Darwin/XNU](docs/darwin/README.md), [FreeBSD](docs/freebsd/found_bugs.md), [Linux](docs/linux/found_bugs.md), [NetBSD](docs/netbsd/found_bugs.md), [OpenBSD](docs/openbsd/found_bugs.md), [Windows](docs/windows/README.md).
+### Pahole
+``` bash
+git clone --branch v1.24 https://github.com/acmel/dwarves.git
+mkdir dwarves/build; cd dwarves/build
+cmake ../
+make
+sudo make install
+```
 
-## Documentation
+More to be added. Let us know if you think something should be added here.
 
-Initially, syzkaller was developed with Linux kernel fuzzing in mind, but now
-it's being extended to support other OS kernels as well.
-Most of the documentation at this moment is related to the [Linux](docs/linux/setup.md) kernel.
-For other OS kernels check:
-[Akaros](docs/akaros/README.md),
-[Darwin/XNU](docs/darwin/README.md),
-[FreeBSD](docs/freebsd/README.md),
-[Fuchsia](docs/fuchsia/README.md),
-[NetBSD](docs/netbsd/README.md),
-[OpenBSD](docs/openbsd/setup.md),
-[Starnix](docs/starnix/README.md),
-[Windows](docs/windows/README.md),
-[gVisor](docs/gvisor/README.md).
+### Build Linux kernel
+Here we use the development branch of network device subsystem of the Linux kernel.
+``` bash
+git clone https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git $KERNEL
+cd $KERNEL
+make CC=clang-17 defconfig
+make CC=clang-17 kvm_guest.config
+```
+Follow the [guide](/docs/linux/kernel_configs.md) and enable kernel configs required by Syzkaller
 
-- [How to install syzkaller](docs/setup.md)
-- [How to use syzkaller](docs/usage.md)
-- [How syzkaller works](docs/internals.md)
-- [How to install syzbot](docs/setup_syzbot.md)
-- [How to contribute to syzkaller](docs/contributing.md)
-- [How to report Linux kernel bugs](docs/linux/reporting_kernel_bugs.md)
-- [Tech talks and articles](docs/talks.md)
-- [Research work based on syzkaller](docs/research.md)
+Enable bpf-related configs by editing .config or through menuconfig.
+``` make
+CONFIG_BPF_SYSCALL
+CONFIG_BPF_JIT
+CONFIG_BPF_LSM
+CONFIG_DEBUG_INFO_BTF
+CONFIG_MODULE_ALLOW_BTF_MISMATCH
+CONFIG_TEST_BPF
+CONFIG_CGROUP_BPF
+CONFIG_NET_ACT_BPF
+CONFIG_NET_CLS_BPF
+CONFIG_BPF_STREAM_PARSER
+CONFIG_LWTUNNEL_BPF
+CONFIG_IPV6_SEG6_BPF
+CONFIG_LIRC
+CONFIG_BPF_LIRC_MODE2
+```
 
-## Disclaimer
+Finally, build the Linux kernel with Clang/LLVM.
+``` make
+make CC=clang-17
+```
 
-This is not an official Google product.
+Build bpftool and libbpf to be used later
+``` bash
+cd $KERNEL/tools/bpf/bpftool
+make CC=clang-17
+cd $KERNEL/tools/lib/bpf
+make
+```
+
+### Create Debian Bookworm Linux image
+``` bash
+mkdir $IMAGE; cd $IMAGE
+cp $SYZKALLER/tools/create-image.sh .
+chmod +x create-image.sh
+ADD_PACKAGE="make,sysbench,git,vim,tmux,usbutils,tcpdump,clang-16" ./create-image.sh --feature full --distribution bookworm --seek 8191
+```
+
+### Prepare the image for compiling BPF programs
+Prepare BRF working directory. The directory will be shared with the guest to store and compile BPF programs.
+``` bash
+mkdir $BRF_WORKDIR; cd $BRF_WORKDIR
+cp $KERNEL/tools/bpf/bpftool/vmlinux.h .
+```
+
+Boot into the guest and install libbpf headers.
+``` bash
+qemu-system-x86_64 \
+        -m 2G \
+        -smp 2 \
+        -kernel $KERNEL/arch/x86/boot/bzImage \
+        -append "console=ttyS0 root=/dev/sda earlyprintk=serial net.ifnames=0" \
+        -drive file=$IMAGE/bookworm.img,format=raw \
+        -net user,host=10.0.2.10,hostfwd=tcp:127.0.0.1:10021-:22 \
+        -net nic,model=e1000 \
+	-virtfs local,path=$KERNEL,mount_tag=host0,security_model=mapped,id=host0 \
+        -enable-kvm \
+        -nographic \
+        -pidfile vm.pid \
+        2>&1 | tee vm.log
+```
+``` bash
+mkdir /mnt/kernel_src
+mount -t 9p -o trans=virtio,version=9p2000.L host0 /mnt/kernel_src
+cd /mnt/kernel_src/tools/lib/bpf
+make install_headers
+```
+## Run BRF
+Create a config like the following and replace $SYZKALLER, $KERNEL, $IMAGE and $BRF\_WORKDIR with the actual paths.
+``` json
+{
+        "target": "linux/amd64",
+        "http": "127.0.0.1:56741",
+        "workdir": "$SYZKALLER/workdir/bookworm",
+        "kernel_obj": "$KERNEL",
+        "image": "$IMAGE/bookworm.img",
+        "sshkey": "$IMAGE/bookworm.id_rsa",
+        "syzkaller": "$SYZKALLER",
+        "procs": 8,
+        "type": "qemu",
+        "vm": {
+                "count": 4,
+                "kernel": "$KERNEL/arch/x86/boot/bzImage",
+                "cpu": 2,
+                "mem": 2048,
+		"brf_workdir": "$BRF_WORKDIR"
+        }
+}
+```
+Run Syzkaller manager:
+```
+mkdir -p workdir/bookworm
+./bin/syzkaller -config my.cfg
+```
+## Acknoledgement
+The work was supported in part by NSF Awards #1763172 and #1846230 as well as Google’s 2020 Android Security and PrIvacy REsearch (ASPIRE) Award.
