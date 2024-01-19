@@ -2,6 +2,7 @@ package prog
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"time"
 
@@ -10,13 +11,43 @@ import (
 
 type BpfRuntimeFuzzer struct {
 	isEnabled     bool
+	workDir       string
 }
 
 func NewBpfRuntimeFuzzer(enable bool) *BpfRuntimeFuzzer {
 	brf := new(BpfRuntimeFuzzer)
+
+	if (!enable) {
+		return brf
+	}
+
+	brf.workDir = "/mnt/brf_work_dir"
+	err := mountBrfWorkDir(brf.workDir)
+	if (err != nil) {
+		return brf
+	}
+
 	brf.isEnabled = true
 
 	return brf
+}
+
+func mountBrfWorkDir(dir string) error {
+	var timeout time.Duration = 10000000000
+
+	err := os.Mkdir(dir, os.ModeDir)
+	if err != nil {
+		fmt.Printf("failed to create brf work dir: %v\n", err)
+		return err
+	}
+
+	args := []string{"-t", "9p", "-o", "trans=virtio,version=9p2000.L", "brf", dir}
+	_, err = osutil.RunCmd(timeout, "", "mount", args...)
+	if err != nil {
+		fmt.Printf("failed to mount brf work dir: %v\n", err)
+		return err
+	}
+	return nil
 }
 
 func (brf *BpfRuntimeFuzzer) IsEnabled() bool {
@@ -41,6 +72,7 @@ func (brf *BpfRuntimeFuzzer) genSeedBpfProg(r *randGen) *BpfProg {
 
 	opt.useTestSrc = true
 	opt.genProgAttempt = 20
+	opt.basePath = brf.workDir
 
 	for i := 0; i < opt.genProgAttempt; i++ {
 		if p, ok = brf.genBpfProg(r, opt); !ok {
@@ -82,6 +114,7 @@ func (brf *BpfRuntimeFuzzer) compileBpfProg(p *BpfProg) error {
 		"-Wno-compare-distinct-pointer-types", "-O2", "-target", "bpf", "-mcpu=v3",
 		"-c", p.BasePath + ".c",
 		"-o", p.BasePath + ".o")
+	cmd.Dir = brf.workDir
 
 	_, err := osutil.Run(timeout, cmd)
 	return err

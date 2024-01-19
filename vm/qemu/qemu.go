@@ -73,6 +73,8 @@ type Config struct {
 	Snapshot bool `json:"snapshot"`
 	// Magic key used to dongle macOS to the device.
 	AppleSmcOsk string `json:"apple_smc_osk"`
+	// BPF runtime fuzzer working directory to be shared with the VM
+	BrfWorkDir string `json:"brf_workdir"`
 }
 
 type Pool struct {
@@ -503,6 +505,11 @@ func (inst *instance) boot() error {
 	if inst.cfg.AppleSmcOsk != "" {
 		args = append(args,
 			"-device", "isa-applesmc,osk="+inst.cfg.AppleSmcOsk,
+		)
+	}
+	if inst.cfg.BrfWorkDir != "" {
+		args = append(args,
+			"-virtfs", "local,path="+inst.cfg.BrfWorkDir+",mount_tag=brf,security_model=mapped,id=brf",
 		)
 	}
 	if inst.debug {

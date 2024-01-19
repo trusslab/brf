@@ -2,7 +2,6 @@ package prog
 
 import (
 	"encoding/gob"
-	"fmt"
 	"os"
 )
 
@@ -14,13 +13,14 @@ type BpfProg struct {
 type BrfGenProgOpt struct {
 	genProgAttempt   int
 	useTestSrc       bool
+	basePath	 string
 }
 
 func newBpfProg(r *randGen, opt BrfGenProgOpt) *BpfProg {
 	p := &BpfProg {}
 
 	if (opt.useTestSrc) {
-		p.BasePath = fmt.Sprintf("/tmp/test_prog")
+		p.BasePath = opt.basePath + "/test_prog"
 		p.UseTestSrc = true
 	}
 
