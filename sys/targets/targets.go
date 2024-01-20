@@ -493,6 +493,7 @@ var oses = map[string]osCommon{
 			"syz_pidfd_open":      {"pidfd_open"},
 			"syz_bpf_prog_open":   {"bpf$PROG_LOAD"},
 			"syz_bpf_prog_load":   {"bpf$PROG_LOAD"},
+			"syz_bpf_prog_attach": {"bpf$BPF_PROG_ATTACH"},
 		},
 		cflags: []string{"-static-pie"},
 	},
