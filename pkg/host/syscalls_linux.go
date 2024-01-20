@@ -330,6 +330,7 @@ var syzkallSupport = map[string]func(*prog.Syscall, *prog.Target, string) (bool,
 	"syz_pidfd_open":              alwaysSupported,
 	"syz_bpf_prog_open":           alwaysSupported,
 	"syz_bpf_prog_load":           alwaysSupported,
+	"syz_bpf_prog_attach":         alwaysSupported,
 }
 
 func isSupportedSyzkall(c *prog.Syscall, target *prog.Target, sandbox string) (bool, string) {

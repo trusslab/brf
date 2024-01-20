@@ -94,6 +94,8 @@ xdp_flags = XDP_FLAGS_UPDATE_IF_NOEXIST, XDP_FLAGS_SKB_MODE, XDP_FLAGS_DRV_MODE,
 
 syz_bpf_prog_open(path ptr[in, filename])
 syz_bpf_prog_load(path ptr[in, filename], res ptr[out, bpf_res]) fd_bpf_prog
+syz_bpf_prog_attach(path ptr[in, filename]) fd_bpf_link
+
 
 bpf_res {
 	prog_fds	array[fd_bpf_prog, 32]
