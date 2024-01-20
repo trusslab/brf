@@ -70,6 +70,10 @@ func (brf *BpfRuntimeFuzzer) GenPrologue(r *randGen, s *state, prog *Prog) {
 	c1 := genBpfProgLoadCall(r, s, p)
 	s.analyze(c1)
 	prog.Calls = append(prog.Calls, c1)
+
+	c2 := genBpfProgAttachCall(r, s, p)
+	s.analyze(c2)
+	prog.Calls = append(prog.Calls, c2)
 }
 
 func genBpfProgOpenCall(r *randGen, s *state, p *BpfProg) *Call {
@@ -103,6 +107,24 @@ func genBpfProgLoadCall(r *randGen, s *state, p *BpfProg) *Call {
 	pathBufferArg := MakeDataArg(pathBuffer, pathBufferDir, pathStr)
 	args[0] = r.allocAddr(s, pathArg.Type, pathArg.Dir(DirIn), pathBufferArg.Size(), pathBufferArg)
 	args[1], _ = r.generateArg(s, meta.Args[1].Type, meta.Args[1].Dir(DirIn))
+
+	c.Args = args
+	r.target.assignSizesCall(c)
+	return c
+}
+
+func genBpfProgAttachCall(r *randGen, s *state, p *BpfProg) *Call {
+	meta := r.target.SyscallMap["syz_bpf_prog_attach"]
+	args := make([]Arg, len(meta.Args))
+	c := MakeCall(meta, nil)
+
+	pathStr := []byte(p.BasePath + ".o")
+	pathArg := meta.Args[0]
+	pathPtr := pathArg.Type.(*PtrType)
+	pathBuffer := pathPtr.Elem.(*BufferType)
+	pathBufferDir := pathPtr.ElemDir
+	pathBufferArg := MakeDataArg(pathBuffer, pathBufferDir, pathStr)
+	args[0] = r.allocAddr(s, pathArg.Type, pathArg.Dir(DirIn), pathBufferArg.Size(), pathBufferArg)
 
 	c.Args = args
 	r.target.assignSizesCall(c)
