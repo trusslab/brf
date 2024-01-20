@@ -5683,7 +5683,7 @@ static long syz_pidfd_open(volatile long pid, volatile long flags)
 
 #endif
 
-#if SYZ_EXECUTOR || __NR_syz_bpf_prog_open
+#if SYZ_EXECUTOR || __NR_syz_bpf_prog_open || __NR_syz_bpf_prog_load
 #include <bpf/bpf.h>
 #include <bpf/libbpf.h>
 
