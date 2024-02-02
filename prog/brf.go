@@ -184,7 +184,7 @@ func (brf *BpfRuntimeFuzzer) genSeedBpfProg(r *randGen) *BpfProg {
 	var p *BpfProg
 	var ok bool
 
-	opt.useTestSrc = true
+//	opt.useTestSrc = true
 	opt.genProgAttempt = 20
 	opt.basePath = brf.workDir
 
@@ -218,7 +218,7 @@ func (brf *BpfRuntimeFuzzer) mutSeedBpfProg(r *randGen, path string) *BpfProg {
 	var opt BrfGenProgOpt
 	var p *BpfProg
 
-	opt.useTestSrc = true
+//	opt.useTestSrc = true
 	opt.genProgAttempt = 20
 	opt.basePath = brf.workDir
 
