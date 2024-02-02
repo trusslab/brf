@@ -203,10 +203,49 @@ func (brf *BpfRuntimeFuzzer) genSeedBpfProg(r *randGen) *BpfProg {
 	return nil
 }
 
+func (brf *BpfRuntimeFuzzer) mutSeedBpfProg(r *randGen, path string) *BpfProg {
+	var opt BrfGenProgOpt
+	var p *BpfProg
+
+	opt.useTestSrc = true
+	opt.genProgAttempt = 20
+	opt.basePath = brf.workDir
+
+	p = NewBpfProg(nil, nil, opt)
+	p.readGob(path)
+
+	for i := 0; i < opt.genProgAttempt; i++ {
+		for ok := false; !ok; {
+			ok = brf.mutBpfProg(r, p, opt)
+		}
+
+		if err := p.writeCSource(); err != nil {
+			fmt.Printf("failed to write bpf program c source: %v\n", err)
+			return nil
+		}
+
+		if err := p.writeGob(); err != nil {
+			fmt.Printf("failed to serialize bpf program: %v\n", err)
+			return nil
+		}
+
+		if err := brf.compileBpfProg(p); err != nil {
+			fmt.Printf("failed to compile bpf program: %v\n", err)
+			continue
+		}
+		return p
+	}
+	return nil
+}
+
 func (brf *BpfRuntimeFuzzer) genBpfProg(r *randGen, opt BrfGenProgOpt) (*BpfProg, bool) {
 	p := newBpfProg(r, opt)
 
 	return p, true
+}
+
+func (brf *BpfRuntimeFuzzer) mutBpfProg(r *randGen, p *BpfProg, opt BrfGenProgOpt) bool {
+	return true
 }
 
 func (brf *BpfRuntimeFuzzer) compileBpfProg(p *BpfProg) error {
