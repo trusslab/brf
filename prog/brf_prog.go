@@ -10,6 +10,19 @@ import (
 type BpfProg struct {
 	BasePath     string
 	UseTestSrc   bool
+
+	pt          *BpfProgType
+	TypeEnum    BpfProgTypeEnum
+	VarId       int
+	Maps        []*BpfMap
+	Calls       []*BpfCall
+	Structs     []*StructDef
+	Externs     map[string]string
+	CtxVars     map[string]string
+	CtxTypes    map[string]string
+	RetVal      int
+	SecStr      string
+	Sec         SecDef
 }
 
 type BrfGenProgOpt struct {
@@ -36,6 +49,8 @@ func (p *BpfProg) writeCSource() error {
 
 	if (p.UseTestSrc) {
 		progSrc = testSrc
+	} else {
+		progSrc = p.genCSource()
 	}
 
 	f, err := os.Create(p.BasePath + ".c")
