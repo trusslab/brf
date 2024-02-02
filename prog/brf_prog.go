@@ -54,6 +54,17 @@ func (p *BpfProg) writeGob() error {
 	return gob.NewEncoder(f).Encode(p)
 }
 
+func (p *BpfProg) readGob(path string) error {
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	return gob.NewDecoder(file).Decode(p)
+}
+
+
 var testSrc = `
 #include "vmlinux.h"
 #include <bpf/bpf_helpers.h>
