@@ -2,7 +2,9 @@ package prog
 
 import (
 	"encoding/gob"
+	"fmt"
 	"os"
+	"time"
 )
 
 type BpfProg struct {
@@ -22,6 +24,8 @@ func newBpfProg(r *randGen, opt BrfGenProgOpt) *BpfProg {
 	if (opt.useTestSrc) {
 		p.BasePath = opt.basePath + "/test_prog"
 		p.UseTestSrc = true
+	} else {
+		p.BasePath = fmt.Sprintf("%v/prog_%x", opt.basePath, time.Now().UnixNano())
 	}
 
 	return p
