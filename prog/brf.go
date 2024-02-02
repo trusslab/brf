@@ -12,6 +12,10 @@ import (
 type BpfRuntimeFuzzer struct {
 	isEnabled     bool
 	workDir       string
+
+	helperFuncMap map[string]*BpfHelperFunc
+	progTypeMap   map[BpfProgTypeEnum]*BpfProgTypeDef
+	ctxAccessMap  map[BpfProgTypeEnum]*BpfCtxAccess
 }
 
 func NewBpfRuntimeFuzzer(enable bool) *BpfRuntimeFuzzer {
@@ -28,6 +32,11 @@ func NewBpfRuntimeFuzzer(enable bool) *BpfRuntimeFuzzer {
 	}
 
 	brf.isEnabled = true
+	brf.helperFuncMap = make(map[string]*BpfHelperFunc)
+	brf.progTypeMap = make(map[BpfProgTypeEnum]*BpfProgTypeDef)
+	brf.ctxAccessMap = make(map[BpfProgTypeEnum]*BpfCtxAccess)
+
+	brf.InitFromSrc(HelperFuncMap, ProgTypeMap, CtxAccessMap)
 
 	return brf
 }
@@ -141,9 +150,11 @@ func (brf *BpfRuntimeFuzzer) genSeedBpfProg(r *randGen) *BpfProg {
 	opt.basePath = brf.workDir
 
 	for i := 0; i < opt.genProgAttempt; i++ {
-		if p, ok = brf.genBpfProg(r, opt); !ok {
+		if p, ok = brf.GenBpfProg(r, opt); !ok {
 			continue
 		}
+		p.FixRef(r)
+		p.FixSpinLock(r)
 
 		if err := p.writeCSource(); err != nil {
 			fmt.Printf("failed to write bpf program c source: %v\n", err)
@@ -174,11 +185,14 @@ func (brf *BpfRuntimeFuzzer) mutSeedBpfProg(r *randGen, path string) *BpfProg {
 
 	p = NewBpfProg(nil, nil, opt)
 	p.readGob(path)
+	p.pt = brf.progTypeMap[p.TypeEnum]
 
 	for i := 0; i < opt.genProgAttempt; i++ {
 		for ok := false; !ok; {
-			ok = brf.mutBpfProg(r, p, opt)
+			ok = brf.MutBpfProg(r, p, opt)
 		}
+		p.FixRef(r)
+		p.FixSpinLock(r)
 
 		if err := p.writeCSource(); err != nil {
 			fmt.Printf("failed to write bpf program c source: %v\n", err)
