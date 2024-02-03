@@ -74,6 +74,10 @@ func (brf *BpfRuntimeFuzzer) GenPrologue(r *randGen, s *state, prog *Prog) {
 	c2 := genBpfProgAttachCall(r, s, p)
 	s.analyze(c2)
 	prog.Calls = append(prog.Calls, c2)
+
+	c3 := genBpfProgTestRunCall(r, s, p, c1.Ret)
+	s.analyze(c3)
+	prog.Calls = append(prog.Calls, c3)
 }
 
 func genBpfProgOpenCall(r *randGen, s *state, p *BpfProg) *Call {
@@ -125,6 +129,41 @@ func genBpfProgAttachCall(r *randGen, s *state, p *BpfProg) *Call {
 	pathBufferDir := pathPtr.ElemDir
 	pathBufferArg := MakeDataArg(pathBuffer, pathBufferDir, pathStr)
 	args[0] = r.allocAddr(s, pathArg.Type, pathArg.Dir(DirIn), pathBufferArg.Size(), pathBufferArg)
+
+	c.Args = args
+	r.target.assignSizesCall(c)
+	return c
+}
+
+func genBpfProgTestRunCall(r *randGen, s *state, p *BpfProg, fd *ResultArg) *Call {
+	meta := r.target.SyscallMap["bpf$BPF_PROG_TEST_RUN"]
+	args := make([]Arg, len(meta.Args))
+	c := MakeCall(meta, nil)
+
+	cmdArg := meta.Args[0]
+	args[0], _ = r.generateArg(s, cmdArg.Type, cmdArg.Dir(DirIn))
+
+	testProgArg := meta.Args[1]
+	testProgPtr := testProgArg.Type.(*PtrType)
+	testProgStruct := testProgPtr.Elem.(*StructType)
+	testProgStructDir := testProgPtr.ElemDir
+
+	testProgStructFields := make([]Arg, len(testProgStruct.Fields))
+	for i, field := range testProgStruct.Fields {
+		if i == 0 {
+			resArg := field
+			resType := resArg.Type.(*ResourceType)
+			testProgStructFields[i] = MakeResultArg(resType, resArg.Dir(DirIn), fd, 0)
+		} else {
+			testProgStructFields[i], _ = r.generateArg(s, field.Type, field.Dir(DirIn))
+		}
+	}
+
+	testProgStructArg := MakeGroupArg(testProgStruct, testProgStructDir, testProgStructFields)
+	args[1] = r.allocAddr(s, testProgArg.Type, testProgArg.Dir(DirIn), testProgStructArg.Size(), testProgStructArg)
+
+	lenArg := meta.Args[2]
+	args[2], _ = r.generateArg(s, lenArg.Type, lenArg.Dir(DirIn))
 
 	c.Args = args
 	r.target.assignSizesCall(c)
